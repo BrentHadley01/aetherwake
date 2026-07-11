@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.25)
 project(Aetherwake VERSION 0.1.0 LANGUAGES CXX)
 
+# ENet's maintained release still declares an older CMake policy baseline.
+# Keep its policy compatibility local to this dependency graph on CMake 4+.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "Minimum CMake policy version for legacy dependencies")
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
