@@ -6,6 +6,7 @@ build-*/
 *.user
 *.suo
 *.log
+*.blend1
 Saved/
 Intermediate/
 Binaries/
