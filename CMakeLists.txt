@@ -59,6 +59,14 @@ add_custom_command(TARGET Aetherwake POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_directory
     "${CMAKE_CURRENT_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:Aetherwake>/assets")
 
+# Ship the SDL runtime next to the Windows executable so it can launch outside
+# the build environment.
+if(AETHERWAKE_FETCH_DEPS)
+  add_custom_command(TARGET Aetherwake POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:SDL3::SDL3> $<TARGET_FILE_DIR:Aetherwake>)
+endif()
+
 if(MSVC)
   target_compile_options(Aetherwake PRIVATE /W4 /permissive-)
 else()
