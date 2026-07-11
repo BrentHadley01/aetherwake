@@ -10,6 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(FetchContent)
+find_package(OpenGL REQUIRED)
 option(AETHERWAKE_FETCH_DEPS "Download native engine dependencies into the local build directory" ON)
 
 if(AETHERWAKE_FETCH_DEPS)
@@ -20,6 +21,7 @@ if(AETHERWAKE_FETCH_DEPS)
   FetchContent_Declare(enet GIT_REPOSITORY https://github.com/lsalzman/enet.git GIT_TAG v1.3.17)
   FetchContent_Declare(JoltPhysics GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git GIT_TAG v5.3.0)
   FetchContent_Declare(imgui GIT_REPOSITORY https://github.com/ocornut/imgui.git GIT_TAG v1.92.2b)
+  FetchContent_Declare(tinygltf GIT_REPOSITORY https://github.com/syoyo/tinygltf.git GIT_TAG v2.9.3)
   set(ENET_INSTALL OFF CACHE BOOL "" FORCE)
   set(JPH_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
   set(JPH_BUILD_HELLO_WORLD OFF CACHE BOOL "" FORCE)
@@ -31,6 +33,10 @@ if(AETHERWAKE_FETCH_DEPS)
   FetchContent_GetProperties(imgui)
   if(NOT imgui_POPULATED)
     FetchContent_Populate(imgui)
+  endif()
+  FetchContent_GetProperties(tinygltf)
+  if(NOT tinygltf_POPULATED)
+    FetchContent_Populate(tinygltf)
   endif()
   add_library(aetherwake_imgui STATIC
     ${imgui_SOURCE_DIR}/imgui.cpp
@@ -45,8 +51,13 @@ add_executable(Aetherwake ${AETHERWAKE_SOURCES})
 target_include_directories(Aetherwake PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 if(AETHERWAKE_FETCH_DEPS)
-  target_link_libraries(Aetherwake PRIVATE SDL3::SDL3 glm::glm EnTT::EnTT nlohmann_json::nlohmann_json enet Jolt aetherwake_imgui)
+  target_link_libraries(Aetherwake PRIVATE SDL3::SDL3 OpenGL::GL glm::glm EnTT::EnTT nlohmann_json::nlohmann_json enet Jolt aetherwake_imgui)
+  target_include_directories(Aetherwake PRIVATE ${tinygltf_SOURCE_DIR})
 endif()
+
+add_custom_command(TARGET Aetherwake POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:Aetherwake>/assets")
 
 if(MSVC)
   target_compile_options(Aetherwake PRIVATE /W4 /permissive-)
