@@ -1,4 +1,6 @@
 build/
+build-*/
+*-configure.log
 .vs/
 .vscode/
 *.user
