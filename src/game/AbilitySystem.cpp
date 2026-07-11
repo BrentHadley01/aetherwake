@@ -19,9 +19,9 @@ const SpellDefinition* AbilitySystem::find(const std::string& spellId) const {
 CastResult AbilitySystem::cast(PlayerState& caster, EnemyState* target, WorldPropState* prop,
                                 const std::string& spellId) const {
     const auto* spell = find(spellId);
-    if (spell == nullptr) return {false, "Unknown spell."};
-    if (!caster.learnedSpells.contains(spellId)) return {false, "Spell not learned."};
-    if (caster.mana < spell->manaCost) return {false, "Insufficient mana."};
+    if (spell == nullptr) return {false, "Unknown spell.", 0, ""};
+    if (!caster.learnedSpells.contains(spellId)) return {false, "Spell not learned.", 0, ""};
+    if (caster.mana < spell->manaCost) return {false, "Insufficient mana.", 0, ""};
 
     caster.mana -= spell->manaCost;
     CastResult result{true, "Cast accepted by host.", spell->baseDamage, spell->worldEffect};

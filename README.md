@@ -24,12 +24,11 @@ The first shippable slice is **The Veiled Reach**: a dense forest basin, ruined 
 
 ## Build and run
 
-This first milestone is dependency-free so design and gameplay rules compile everywhere. It runs a playable-systems simulation in the terminal.
+This project uses a local native C++ stack. CMake downloads its open-source engine dependencies into `build/_deps`, inside this checkout. It runs a playable-systems simulation in the terminal today; the renderer and scene loop are the next local-engine milestone.
 
 ```powershell
-cmake -S . -B build
-cmake --build build --config Release
-.\build\Release\Aetherwake.exe
+.\scripts\bootstrap.ps1 -Build
+.\build\Debug\Aetherwake.exe
 ```
 
 On single-config generators, run `./build/Aetherwake`.
@@ -52,4 +51,4 @@ On single-config generators, run `./build/Aetherwake`.
 - `assets/ai-generated-assets` — clearly labeled generated visual source material.
 - `docs` — technical, production, and Steam-release decisions.
 
-See [the design brief](docs/GAME_DESIGN.md), [multiplayer architecture](docs/MULTIPLAYER.md), and [production plan](docs/PRODUCTION_PLAN.md).
+See [the native engine plan](docs/NATIVE_ENGINE.md), [design brief](docs/GAME_DESIGN.md), [multiplayer architecture](docs/MULTIPLAYER.md), and [production plan](docs/PRODUCTION_PLAN.md).
