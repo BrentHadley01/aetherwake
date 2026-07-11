@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <memory>
+#include <string>
 
 namespace aetherwake::renderer {
 struct GltfPreview::Impl { tinygltf::Model model; };
@@ -44,11 +45,24 @@ static void drawNode(const tinygltf::Model& model, int nodeIndex) {
         const auto& positions = model.accessors[posIt->second]; const auto& view = model.bufferViews[positions.bufferView];
         const float* vertices = reinterpret_cast<const float*>(model.buffers[view.buffer].data.data() + view.byteOffset + positions.byteOffset);
         const int stride = view.byteStride ? view.byteStride / sizeof(float) : 3;
-        float r = 0.18F, g = 0.34F, b = 0.29F;
-        if (primitive.material >= 0) { const auto& c = model.materials[primitive.material].pbrMetallicRoughness.baseColorFactor; if (c.size() == 4) { r = static_cast<float>(c[0]); g = static_cast<float>(c[1]); b = static_cast<float>(c[2]); } }
-        glColor3f(r, g, b); glBegin(GL_TRIANGLES);
+        const float* normals = nullptr; int normalStride = 3;
+        const auto normalIt = primitive.attributes.find("NORMAL");
+        if (normalIt != primitive.attributes.end()) { const auto& normalAccessor = model.accessors[normalIt->second]; const auto& normalView = model.bufferViews[normalAccessor.bufferView]; normals = reinterpret_cast<const float*>(model.buffers[normalView.buffer].data.data() + normalView.byteOffset + normalAccessor.byteOffset); normalStride = normalView.byteStride ? normalView.byteStride / sizeof(float) : 3; }
+        float r = 0.16F, g = 0.22F, b = 0.20F;
+        if (primitive.material >= 0) {
+            const auto& material = model.materials[primitive.material]; const auto& c = material.pbrMetallicRoughness.baseColorFactor;
+            if (c.size() == 4 && (c[0] < 0.95 || c[1] < 0.95 || c[2] < 0.95)) { r = static_cast<float>(c[0]); g = static_cast<float>(c[1]); b = static_cast<float>(c[2]); }
+            const std::string& name = material.name;
+            if (name.find("Basalt") != std::string::npos) { r = 0.12F; g = 0.16F; b = 0.18F; }
+            else if (name.find("soil") != std::string::npos) { r = 0.08F; g = 0.12F; b = 0.045F; }
+            else if (name.find("bark") != std::string::npos) { r = 0.09F; g = 0.045F; b = 0.018F; }
+            else if (name.find("wool") != std::string::npos) { r = 0.02F; g = 0.06F; b = 0.11F; }
+            else if (name.find("shell") != std::string::npos) { r = 0.02F; g = 0.19F; b = 0.12F; }
+            else if (name.find("rune") != std::string::npos || name.find("aether") != std::string::npos) { r = 0.03F; g = 0.9F; b = 0.60F; }
+        }
+        const GLfloat materialColor[] = {r, g, b, 1.0F}; glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, materialColor); glBegin(GL_TRIANGLES);
         const int count = primitive.indices >= 0 ? static_cast<int>(model.accessors[primitive.indices].count) : static_cast<int>(positions.count);
-        for (int i = 0; i < count; ++i) { const unsigned int idx = primitive.indices >= 0 ? indexAt(model, model.accessors[primitive.indices], i) : static_cast<unsigned int>(i); glVertex3fv(vertices + idx * stride); }
+        for (int i = 0; i < count; ++i) { const unsigned int idx = primitive.indices >= 0 ? indexAt(model, model.accessors[primitive.indices], i) : static_cast<unsigned int>(i); if (normals) glNormal3fv(normals + idx * normalStride); glVertex3fv(vertices + idx * stride); }
         glEnd();
     }
     for (int child : node.children) drawNode(model, child); glPopMatrix();
