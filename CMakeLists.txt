@@ -26,6 +26,8 @@ if(AETHERWAKE_FETCH_DEPS)
   set(JPH_BUILD_VIEWER OFF CACHE BOOL "" FORCE)
   set(JPH_BUILD_TESTS OFF CACHE BOOL "" FORCE)
   FetchContent_MakeAvailable(SDL3 glm entt json enet JoltPhysics)
+  # Jolt keeps its top-level build entry point in Build/ rather than repository root.
+  add_subdirectory(${joltphysics_SOURCE_DIR}/Build ${joltphysics_BINARY_DIR})
   FetchContent_GetProperties(imgui)
   if(NOT imgui_POPULATED)
     FetchContent_Populate(imgui)

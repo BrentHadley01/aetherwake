@@ -24,14 +24,14 @@ The first shippable slice is **The Veiled Reach**: a dense forest basin, ruined 
 
 ## Build and run
 
-This project uses a local native C++ stack. CMake downloads its open-source engine dependencies into `build/_deps`, inside this checkout. It runs a playable-systems simulation in the terminal today; the renderer and scene loop are the next local-engine milestone.
+This project uses a local native C++ stack. CMake downloads its open-source engine dependencies into `build/_deps`, inside this checkout. The current vertical slice opens as an SDL play window with movement, spell selection, casting, an enemy encounter, and an objective loop.
 
 ```powershell
 .\scripts\bootstrap.ps1 -Build
-.\build\Debug\Aetherwake.exe
+.\build\Aetherwake.exe
 ```
 
-On single-config generators, run `./build/Aetherwake`.
+The local Windows toolchain uses a single-config build, so run `./build/Aetherwake.exe`.
 
 ## Controls target
 
