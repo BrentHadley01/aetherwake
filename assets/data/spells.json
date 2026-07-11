@@ -1,0 +1,6 @@
+[
+  {"id":"ember_lance","name":"Ember Lance","element":"ember","manaCost":18,"baseDamage":32,"interaction":"Ignites brambles and volatile growth."},
+  {"id":"tidal_bind","name":"Tidal Bind","element":"tide","manaCost":22,"baseDamage":14,"interaction":"Creates shallow water and slows corrupted foes."},
+  {"id":"stone_lift","name":"Stone Lift","element":"stone","manaCost":28,"baseDamage":8,"interaction":"Raises a climbable slab and interrupts armored enemies."},
+  {"id":"veil_sight","name":"Veil Sight","element":"veil","manaCost":12,"baseDamage":0,"interaction":"Reveals hidden sigils, trails, and weak points."}
+]

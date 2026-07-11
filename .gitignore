@@ -1,0 +1,10 @@
+build/
+.vs/
+.vscode/
+*.user
+*.suo
+*.log
+Saved/
+Intermediate/
+Binaries/
+DerivedDataCache/
