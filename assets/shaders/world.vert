@@ -4,6 +4,7 @@ varying vec3 vNormal;
 varying vec3 vViewPosition;
 varying vec2 vUv;
 varying vec4 vTint;
+varying vec3 vWorld;
 
 void main() {
     vec4 viewPosition = gl_ModelViewMatrix * gl_Vertex;
@@ -11,5 +12,6 @@ void main() {
     vNormal = normalize(gl_NormalMatrix * gl_Normal);
     vUv = gl_MultiTexCoord0.xy;
     vTint = gl_Color;
+    vWorld = gl_Vertex.xyz;
     gl_Position = gl_ProjectionMatrix * viewPosition;
 }

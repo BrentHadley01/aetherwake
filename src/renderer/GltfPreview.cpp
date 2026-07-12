@@ -50,6 +50,9 @@ static void drawNode(const tinygltf::Model& model, const std::vector<GLuint>& te
     // Blender volume materials are not polygonal GLB surfaces. The authored fog
     // cube must be skipped here and recreated by the runtime fog pass later.
     if (node.name == "Low rain fog") { glPopMatrix(); return; }
+    // The streamed world now owns the ground and forest; the authored flat
+    // terrain plane and placeholder trees would clash with it.
+    if (node.name == "Hollowmere terrain" || node.name.rfind("Old growth", 0) == 0) { glPopMatrix(); return; }
     if (node.matrix.size() == 16) glMultMatrixd(node.matrix.data());
     else {
         if (node.translation.size() == 3) glTranslated(node.translation[0], node.translation[1], node.translation[2]);
