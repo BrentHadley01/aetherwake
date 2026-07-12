@@ -529,8 +529,8 @@ int main() {
 
     // Blender-authored environment details, compiled once into display lists and
     // instanced across the streamed terrain by the world streamer.
-    std::array<GLuint, 16> detailLists{};
-    const std::array<const char*, 16> detailFiles{"assets/models/detail_pine.glb", "assets/models/detail_spruce.glb", "assets/models/detail_snag.glb", "assets/models/detail_boulder.glb", "assets/models/detail_fern.glb", "assets/models/detail_log.glb", "assets/models/detail_wildflower.glb", "assets/models/detail_heather.glb", "assets/models/detail_mushrooms.glb", "assets/models/detail_reeds.glb", "assets/models/detail_shrub.glb", "assets/models/detail_meadow_grass.glb", "assets/models/detail_pine_lod.glb", "assets/models/detail_spruce_lod.glb", "assets/models/detail_birch.glb", "assets/models/detail_birch_lod.glb"};
+    std::array<GLuint, 23> detailLists{};
+    const std::array<const char*, 23> detailFiles{"assets/models/detail_pine.glb", "assets/models/detail_spruce.glb", "assets/models/detail_snag.glb", "assets/models/detail_boulder.glb", "assets/models/detail_fern.glb", "assets/models/detail_log.glb", "assets/models/detail_wildflower.glb", "assets/models/detail_heather.glb", "assets/models/detail_mushrooms.glb", "assets/models/detail_reeds.glb", "assets/models/detail_shrub.glb", "assets/models/detail_meadow_grass.glb", "assets/models/detail_pine_lod.glb", "assets/models/detail_spruce_lod.glb", "assets/models/detail_birch.glb", "assets/models/detail_birch_lod.glb", "assets/models/detail_clover.glb", "assets/models/detail_sedge.glb", "assets/models/detail_dry_grass.glb", "assets/models/detail_forest_litter.glb", "assets/models/detail_pebbles.glb", "assets/models/detail_lupine.glb", "assets/models/detail_moss_mat.glb"};
     for (std::size_t i = 0; i < detailFiles.size(); ++i) {
         renderer::GltfPreview detail;
         if (!detail.load(detailFiles[i])) continue;

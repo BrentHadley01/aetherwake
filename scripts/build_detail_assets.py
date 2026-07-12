@@ -522,6 +522,136 @@ def build_birch(filename, seed, branch_rows, leaves_per_twig):
     export_glb(filename)
 
 
+def build_clover():
+    reset_scene(); rng = random.Random(211)
+    stem_material = solid_material("CloverStems", (0.018, 0.085, 0.020, 1.0), roughness=0.90)
+    leaf_material = solid_material("CloverLeaves", (0.020, 0.125, 0.025, 1.0), roughness=0.86)
+    bloom_material = solid_material("CloverBloom", (0.68, 0.64, 0.58, 1.0), roughness=0.82)
+    verts, faces = [], []
+    for plant in range(34):
+        angle, radius = rng.random() * math.tau, rng.uniform(0.02, 0.72)
+        root = Vector((math.cos(angle) * radius, math.sin(angle) * radius, 0))
+        top = root + Vector((rng.uniform(-0.08, 0.08), rng.uniform(-0.08, 0.08), rng.uniform(0.10, 0.28)))
+        stem = add_cone_between(root, top, 0.007, 0.003, sides=8); stem.data.materials.append(stem_material)
+        for leaflet in range(3):
+            a = angle + leaflet * math.tau / 3.0 + rng.uniform(-0.12, 0.12)
+            add_leaf_blade(verts, faces, top, Vector((math.cos(a), math.sin(a), 0.05)).normalized(), rng.uniform(0.075, 0.125), rng.uniform(0.035, 0.055))
+        if plant % 7 == 0:
+            bloom_center = top + Vector((0, 0, rng.uniform(0.04, 0.10)))
+            for petal in range(12):
+                a = petal * GOLDEN_ANGLE; z = (petal / 11.0 - 0.5) * 0.07
+                bpy.ops.mesh.primitive_uv_sphere_add(segments=12, ring_count=7, radius=0.028,
+                    location=bloom_center + Vector((math.cos(a) * 0.035, math.sin(a) * 0.035, z)))
+                flower = bpy.context.active_object; flower.scale = (0.72, 0.72, 1.05); flower.data.materials.append(bloom_material)
+    mesh = bpy.data.meshes.new("CurvedCloverLeaves"); mesh.from_pydata(verts, [], faces); mesh.materials.append(leaf_material)
+    for polygon in mesh.polygons: polygon.use_smooth = True
+    obj = bpy.data.objects.new("CurvedCloverLeaves", mesh); bpy.context.collection.objects.link(obj)
+    export_glb("detail_clover.glb")
+
+
+def build_sedge(filename, dry=False):
+    reset_scene(); rng = random.Random(241 if dry else 223)
+    dark_color = (0.15, 0.095, 0.032, 1.0) if dry else (0.025, 0.095, 0.028, 1.0)
+    lit_color = (0.28, 0.19, 0.065, 1.0) if dry else (0.055, 0.17, 0.045, 1.0)
+    dark = solid_material("DryGrassDark" if dry else "WetSedgeDark", dark_color, roughness=0.92)
+    lit = solid_material("DryGrassLit" if dry else "WetSedgeLit", lit_color, roughness=0.90)
+    seed = solid_material("SeedPanicles", (0.23, 0.14, 0.045, 1.0) if dry else (0.10, 0.14, 0.045, 1.0), roughness=0.94)
+    verts, faces, materials = [], [], []
+    for blade in range(54):
+        angle = blade * GOLDEN_ANGLE + rng.uniform(-0.18, 0.18); radial = rng.uniform(0.0, 0.48)
+        root = Vector((math.cos(angle) * radial, math.sin(angle) * radial, 0)); direction = Vector((math.cos(angle), math.sin(angle), 0))
+        length = rng.uniform(0.42, 1.05 if dry else 1.28); width = rng.uniform(0.009, 0.025)
+        side = direction.cross(Vector((0, 0, 1))).normalized(); i = len(verts)
+        stations = ((0.0, 1.0), (0.24, 0.92), (0.52, 0.68), (0.78, 0.34), (1.0, 0.04))
+        for station, profile in stations:
+            bend = direction * (length * station * station * rng.uniform(0.20, 0.52))
+            middle = root + bend + Vector((0, 0, length * station))
+            verts.extend([middle - side * width * profile, middle + side * width * profile])
+        material_index = 1 if blade % 3 == 0 else 0
+        for station in range(4):
+            a = i + station * 2; faces.append((a, a + 1, a + 3, a + 2)); materials.append(material_index)
+        if blade % (4 if dry else 7) == 0:
+            tip = Vector(verts[i + 8] + verts[i + 9]) * 0.5
+            for grain in range(7):
+                ga = grain * GOLDEN_ANGLE
+                bpy.ops.mesh.primitive_uv_sphere_add(segments=10, ring_count=6, radius=0.018,
+                    location=tip + Vector((math.cos(ga) * 0.045, math.sin(ga) * 0.045, (grain - 3) * 0.025)))
+                bpy.context.active_object.data.materials.append(seed)
+    mesh = bpy.data.meshes.new("CurvedGrassBlades"); mesh.from_pydata(verts, [], faces); mesh.materials.append(dark); mesh.materials.append(lit)
+    for polygon, material_index in zip(mesh.polygons, materials): polygon.material_index = material_index; polygon.use_smooth = True
+    obj = bpy.data.objects.new("CurvedGrassBlades", mesh); bpy.context.collection.objects.link(obj)
+    export_glb(filename)
+
+
+def build_forest_litter():
+    reset_scene(); rng = random.Random(263)
+    leaf_material = solid_material("ForestLeafLitter", (0.16, 0.075, 0.020, 1.0), roughness=0.97)
+    twig_material = solid_material("FineDeadTwigs", (0.075, 0.035, 0.012, 1.0), roughness=0.98)
+    verts, faces = [], []
+    for leaf in range(65):
+        angle, radius = rng.random() * math.tau, rng.uniform(0.02, 0.85)
+        center = Vector((math.cos(angle) * radius, math.sin(angle) * radius, rng.uniform(0.006, 0.025)))
+        direction = Vector((math.cos(angle + rng.uniform(-1.2, 1.2)), math.sin(angle + rng.uniform(-1.2, 1.2)), 0)).normalized()
+        add_leaf_blade(verts, faces, center, direction, rng.uniform(0.09, 0.22), rng.uniform(0.025, 0.065))
+    mesh = bpy.data.meshes.new("CurledLeafLitter"); mesh.from_pydata(verts, [], faces); mesh.materials.append(leaf_material)
+    for polygon in mesh.polygons: polygon.use_smooth = True
+    obj = bpy.data.objects.new("CurledLeafLitter", mesh); bpy.context.collection.objects.link(obj)
+    for twig in range(14):
+        angle, radius = rng.random() * math.tau, rng.uniform(0.05, 0.75)
+        p0 = Vector((math.cos(angle) * radius, math.sin(angle) * radius, 0.025))
+        p1 = p0 + Vector((math.cos(angle + rng.uniform(-1.0, 1.0)), math.sin(angle + rng.uniform(-1.0, 1.0)), rng.uniform(-0.01, 0.04))) * rng.uniform(0.18, 0.55)
+        branch = add_cone_between(p0, p1, rng.uniform(0.008, 0.018), rng.uniform(0.002, 0.006), sides=8); branch.data.materials.append(twig_material)
+    export_glb("detail_forest_litter.glb")
+
+
+def build_pebbles():
+    reset_scene(); rng = random.Random(281)
+    stone = textured_material("PebblePhotoscanStone", "mossy_rock_diff.jpg", roughness=0.94)
+    for pebble in range(22):
+        angle, radius = rng.random() * math.tau, rng.uniform(0.04, 0.90)
+        size = rng.uniform(0.055, 0.19)
+        bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=3, radius=size, location=(math.cos(angle) * radius, math.sin(angle) * radius, size * 0.38))
+        obj = bpy.context.active_object; obj.scale = (rng.uniform(0.8, 1.5), rng.uniform(0.65, 1.25), rng.uniform(0.45, 0.78)); obj.rotation_euler = (rng.random(), rng.random(), rng.random()); obj.data.materials.append(stone); bpy.ops.object.shade_smooth()
+    export_glb("detail_pebbles.glb")
+
+
+def build_moss_mat():
+    reset_scene(); rng = random.Random(307)
+    dark = solid_material("MossMatDark", (0.012, 0.052, 0.012, 1.0), roughness=0.99)
+    lit = solid_material("MossMatLit", (0.032, 0.105, 0.022, 1.0), roughness=0.98)
+    for cushion in range(38):
+        angle, radius = rng.random() * math.tau, rng.uniform(0.0, 0.78); size = rng.uniform(0.07, 0.22)
+        bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=3, radius=size, location=(math.cos(angle) * radius, math.sin(angle) * radius, size * 0.20))
+        obj = bpy.context.active_object; obj.scale = (rng.uniform(1.2, 2.4), rng.uniform(1.2, 2.4), rng.uniform(0.18, 0.34)); obj.data.materials.append(lit if cushion % 4 == 0 else dark); bpy.ops.object.shade_smooth()
+    export_glb("detail_moss_mat.glb")
+
+
+def build_lupine():
+    reset_scene(); rng = random.Random(331)
+    stem = solid_material("LupineStems", (0.018, 0.082, 0.022, 1.0), roughness=0.90)
+    leaf = solid_material("LupineLeaves", (0.025, 0.13, 0.032, 1.0), roughness=0.86)
+    petal = solid_material("LupinePetals", (0.24, 0.12, 0.42, 1.0), roughness=0.76)
+    verts, faces = [], []
+    for plant in range(9):
+        angle, radius = rng.random() * math.tau, rng.uniform(0.02, 0.58); root = Vector((math.cos(angle) * radius, math.sin(angle) * radius, 0))
+        height = rng.uniform(0.52, 1.12); top = root + Vector((rng.uniform(-0.06, 0.06), rng.uniform(-0.06, 0.06), height))
+        stalk = add_cone_between(root, top, 0.014, 0.005, sides=10); stalk.data.materials.append(stem)
+        for whorl in (0.24, 0.43, 0.60):
+            center = root.lerp(top, whorl)
+            for leaflet in range(7):
+                a = leaflet / 7 * math.tau + angle
+                add_leaf_blade(verts, faces, center, Vector((math.cos(a), math.sin(a), 0.08)).normalized(), rng.uniform(0.10, 0.18), rng.uniform(0.022, 0.04))
+        for blossom in range(20):
+            t = 0.62 + blossom / 19 * 0.36; a = blossom * GOLDEN_ANGLE
+            center = root.lerp(top, t) + Vector((math.cos(a) * (1.0 - t) * 0.22, math.sin(a) * (1.0 - t) * 0.22, 0))
+            bpy.ops.mesh.primitive_uv_sphere_add(segments=14, ring_count=8, radius=0.044, location=center)
+            flower = bpy.context.active_object; flower.scale = (1.0, 0.62, 0.82); flower.data.materials.append(petal)
+    mesh = bpy.data.meshes.new("LupinePalmateLeaves"); mesh.from_pydata(verts, [], faces); mesh.materials.append(leaf)
+    for polygon in mesh.polygons: polygon.use_smooth = True
+    obj = bpy.data.objects.new("LupinePalmateLeaves", mesh); bpy.context.collection.objects.link(obj)
+    export_glb("detail_lupine.glb")
+
+
 def build_wayfinder():
     """Detailed grounded third-person mage with a readable human silhouette."""
     reset_scene()
@@ -673,6 +803,13 @@ build_mushrooms()
 build_reeds()
 build_shrub()
 build_meadow_grass()
+build_clover()
+build_sedge("detail_sedge.glb", dry=False)
+build_sedge("detail_dry_grass.glb", dry=True)
+build_forest_litter()
+build_pebbles()
+build_moss_mat()
+build_lupine()
 build_wayfinder()
 print("DETAIL ASSETS EXPORTED")
 

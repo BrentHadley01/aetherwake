@@ -178,7 +178,9 @@ void WorldStreamer::update(float playerX, float playerZ) {
                 auto nextUnit = [&rng]() { rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; return static_cast<float>(rng & 0xFFFFFFU) / 16777215.0F; };
                 // Types: 0 pine, 1 spruce, 2 snag, 3 boulder, 4 fern, 5 log,
                 // 6 wildflower, 7 heather, 8 mushrooms, 9 reeds, 10 shrub,
-                // 11 meadow grass, 14 birch (12/13 and 15 are render-only LODs).
+                // 11 meadow grass, 14 birch (12/13 and 15 are render-only LODs),
+                // 16 clover, 17 sedge, 18 dry grass, 19 litter, 20 pebbles,
+                // 21 lupine, 22 moss mat.
                 for (int attempt = 0; attempt < 104; ++attempt) {
                     const float px = originX + nextUnit() * chunkSize, pz = originZ + nextUnit() * chunkSize;
                     const float py = heightAt(px, pz);
@@ -216,6 +218,26 @@ void WorldStreamer::update(float playerX, float playerZ) {
                         chunk.details.push_back({px, py - 0.04F, pz, 0.65F + nextUnit() * 0.95F, nextUnit() * 360.0F, 10});
                     } else if (slope >= 0.18F || nextUnit() < 0.35F) {
                         chunk.details.push_back({px, py - 0.35F, pz, 0.5F + nextUnit() * 1.3F, nextUnit() * 360.0F, 3});
+                    }
+                    // A second, independent ground-layer decision creates
+                    // overlapping ecological strata instead of one prop per
+                    // sample. Each GLB is already a dense natural cluster.
+                    if (slope < 0.34F && nextUnit() < 0.38F) {
+                        const float gx = px + (nextUnit() - 0.5F) * 3.2F, gz = pz + (nextUnit() - 0.5F) * 3.2F;
+                        const float gy = heightAt(gx, gz);
+                        if (gy > waterLevel + 0.18F) {
+                            const float layerPick = nextUnit();
+                            int groundType = -1;
+                            if (gy < waterLevel + 3.2F && moisture > 0.46F) groundType = 17;                  // shoreline sedge
+                            else if (forested && moisture > 0.60F && layerPick < 0.34F) groundType = 22;      // moss cushions
+                            else if (forested && layerPick < 0.70F) groundType = 19;                           // curled leaves/twigs
+                            else if (forested) groundType = moisture > 0.52F ? 16 : 20;                       // clover or stones
+                            else if (moisture > 0.60F && layerPick < 0.20F) groundType = 21;                  // lupine pockets
+                            else if (moisture > 0.48F) groundType = 16;                                       // clover meadow
+                            else if (layerPick < 0.78F) groundType = 18;                                      // dry fescue
+                            else groundType = 20;                                                              // pebble scatter
+                            if (groundType >= 0) chunk.details.push_back({gx, gy - 0.025F, gz, 0.55F + nextUnit() * 0.90F, nextUnit() * 360.0F, groundType});
+                        }
                     }
                 }
             }
@@ -292,12 +314,14 @@ void WorldStreamer::drawDetails(const unsigned int* lists, int listCount, float 
             const float cameraDx = instance.x - excludeX, cameraDz = instance.z - excludeZ;
             const float distanceSquared = cameraDx * cameraDx + cameraDz * cameraDz;
             const bool tree = instance.type <= 2 || instance.type == 14;
+            const bool shadowPass = viewForwardX == 0.0F && viewForwardZ == 0.0F;
+            if (shadowPass && instance.type >= 16) continue; // micro-cover is sub-pixel in the shadow map
             if (excludeRadius > 0.0F && distanceSquared < excludeRadius * excludeRadius && tree) continue;
             if (maxDistance > 0.0F) {
                 // Small props vanish into fog/grass long before the large tree
                 // silhouettes do. This is a visibility budget, not a quality
                 // reduction for anything the player can resolve.
-                const float typeDistance = tree ? maxDistance : instance.type <= 5 ? maxDistance * 0.52F : maxDistance * 0.30F;
+                const float typeDistance = tree ? maxDistance : instance.type <= 5 ? maxDistance * 0.52F : instance.type >= 16 ? maxDistance * 0.07F : maxDistance * 0.30F;
                 if (distanceSquared > typeDistance * typeDistance) continue;
                 // The render back-end still clips off-screen geometry, but it
                 // has already paid to submit it. Cull the rear hemisphere on
@@ -313,8 +337,9 @@ void WorldStreamer::drawDetails(const unsigned int* lists, int listCount, float 
             // The far assets were authored from the same generator and retain
             // the silhouette, so this is perceptual LOD rather than a visual
             // quality toggle.
-            if (instance.type <= 1 && listCount >= 14 && distanceSquared > 70.0F * 70.0F) resolvedType += 12;
-            if (instance.type == 14 && listCount >= 16 && distanceSquared > 70.0F * 70.0F) resolvedType = 15;
+            const float lodDistance = shadowPass ? 28.0F : 55.0F;
+            if (instance.type <= 1 && listCount >= 14 && distanceSquared > lodDistance * lodDistance) resolvedType += 12;
+            if (instance.type == 14 && listCount >= 16 && distanceSquared > lodDistance * lodDistance) resolvedType = 15;
             const unsigned int list = lists[resolvedType % listCount];
             if (!list) continue;
             glPushMatrix();
