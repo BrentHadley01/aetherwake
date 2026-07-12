@@ -471,8 +471,10 @@ int main() {
         const float forwardX = std::sin(yawRadians), forwardZ = std::cos(yawRadians);
         if (keys[SDL_SCANCODE_W]) { heroX += forwardX * speed; heroZ += forwardZ * speed; }
         if (keys[SDL_SCANCODE_S]) { heroX -= forwardX * speed; heroZ -= forwardZ * speed; }
-        if (keys[SDL_SCANCODE_A]) { heroX -= forwardZ * speed; heroZ += forwardX * speed; }
-        if (keys[SDL_SCANCODE_D]) { heroX += forwardZ * speed; heroZ -= forwardX * speed; }
+        // buildView's screen-right axis is (-forwardZ, forwardX). The old
+        // mapping used it for A, making lateral movement feel inverted.
+        if (keys[SDL_SCANCODE_A]) { heroX += forwardZ * speed; heroZ -= forwardX * speed; }
+        if (keys[SDL_SCANCODE_D]) { heroX -= forwardZ * speed; heroZ += forwardX * speed; }
         if (keys[SDL_SCANCODE_Q] || keys[SDL_SCANCODE_LEFT]) yaw += 80.0F * dt;
         if (keys[SDL_SCANCODE_E] || keys[SDL_SCANCODE_RIGHT]) yaw -= 80.0F * dt;
         heroX = std::clamp(heroX, -4000.0F, 4000.0F); heroZ = std::clamp(heroZ, -4000.0F, 4000.0F);
