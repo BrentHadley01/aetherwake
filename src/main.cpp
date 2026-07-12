@@ -116,6 +116,70 @@ void buildOrtho(float halfWidth, float halfHeight, float nearPlane, float farPla
     m[10] = -2.0F / (farPlane - nearPlane); m[14] = -(farPlane + nearPlane) / (farPlane - nearPlane); m[15] = 1.0F;
 }
 
+enum class SpellVfxKind : unsigned char { Ember, Tide, Stone, Veil };
+struct SpellParticle {
+    float x{}, y{}, z{}, vx{}, vy{}, vz{};
+    float age{}, lifetime{}, size{};
+    SpellVfxKind kind{};
+};
+
+float vfxNoise(int value) { return std::sin(static_cast<float>(value) * 78.233F) * 0.5F + 0.5F; }
+
+void spawnSpellVfx(std::vector<SpellParticle>& particles, int spellIndex, float x, float y, float z, float forwardX, float forwardZ) {
+    const SpellVfxKind kind = static_cast<SpellVfxKind>(spellIndex);
+    const int count = kind == SpellVfxKind::Ember ? 68 : kind == SpellVfxKind::Tide ? 76 : kind == SpellVfxKind::Stone ? 54 : 88;
+    const float sideX = -forwardZ, sideZ = forwardX;
+    for (int i = 0; i < count; ++i) {
+        const float a = static_cast<float>(i) * 2.39996F + vfxNoise(i + count) * 0.55F;
+        const float radial = 0.12F + vfxNoise(i * 3 + count) * 0.85F;
+        SpellParticle p{}; p.kind = kind; p.age = 0.0F; p.size = 0.045F + vfxNoise(i * 11) * 0.10F;
+        if (kind == SpellVfxKind::Ember) {
+            p.x = x + forwardX * 0.7F + sideX * std::cos(a) * 0.18F; p.y = y + 1.48F + std::sin(a) * 0.16F; p.z = z + forwardZ * 0.7F + sideZ * std::cos(a) * 0.18F;
+            p.vx = forwardX * (12.0F + vfxNoise(i) * 8.0F) + sideX * std::sin(a) * 1.9F; p.vy = std::sin(a * 1.7F) * 1.4F + 0.5F; p.vz = forwardZ * (12.0F + vfxNoise(i) * 8.0F) + sideZ * std::sin(a) * 1.9F;
+            p.lifetime = 0.48F + vfxNoise(i * 9) * 0.42F;
+        } else if (kind == SpellVfxKind::Tide) {
+            p.x = x + std::cos(a) * radial * 1.2F; p.y = y + 0.20F + vfxNoise(i) * 0.55F; p.z = z + std::sin(a) * radial * 1.2F;
+            p.vx = -std::sin(a) * (2.2F + radial); p.vy = 0.55F + vfxNoise(i * 2) * 1.1F; p.vz = std::cos(a) * (2.2F + radial); p.lifetime = 1.05F + vfxNoise(i * 7) * 0.65F;
+        } else if (kind == SpellVfxKind::Stone) {
+            p.x = x + forwardX * 1.3F + std::cos(a) * radial; p.y = y + 0.08F; p.z = z + forwardZ * 1.3F + std::sin(a) * radial;
+            p.vx = std::cos(a) * (0.8F + radial); p.vy = 3.8F + vfxNoise(i) * 4.8F; p.vz = std::sin(a) * (0.8F + radial); p.size *= 1.65F; p.lifetime = 0.75F + vfxNoise(i * 3) * 0.55F;
+        } else {
+            p.x = x + std::cos(a) * radial * 1.7F; p.y = y + 0.55F + vfxNoise(i) * 1.65F; p.z = z + std::sin(a) * radial * 1.7F;
+            p.vx = -std::sin(a) * 0.7F; p.vy = 0.35F + vfxNoise(i) * 0.75F; p.vz = std::cos(a) * 0.7F; p.lifetime = 1.35F + vfxNoise(i * 5) * 1.10F;
+        }
+        particles.push_back(p);
+    }
+}
+
+void updateSpellVfx(std::vector<SpellParticle>& particles, float dt) {
+    for (SpellParticle& p : particles) {
+        p.age += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+        if (p.kind == SpellVfxKind::Ember) { p.vy -= 3.3F * dt; p.vx *= 0.985F; p.vz *= 0.985F; }
+        else if (p.kind == SpellVfxKind::Stone) p.vy -= 11.0F * dt;
+        else if (p.kind == SpellVfxKind::Veil) { p.vx *= 0.992F; p.vz *= 0.992F; }
+    }
+    particles.erase(std::remove_if(particles.begin(), particles.end(), [](const SpellParticle& p) { return p.age >= p.lifetime; }), particles.end());
+}
+
+void drawSpellVfx(const std::vector<SpellParticle>& particles, float forwardX, float forwardZ) {
+    if (particles.empty()) return;
+    const float rightX = -forwardZ, rightZ = forwardX;
+    glDisable(GL_TEXTURE_2D); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE); glDepthMask(GL_FALSE);
+    glBegin(GL_QUADS);
+    for (const SpellParticle& p : particles) {
+        const float t = p.age / p.lifetime, fade = (1.0F - t) * (1.0F - t);
+        float r = 0.3F, g = 0.8F, b = 1.0F;
+        if (p.kind == SpellVfxKind::Ember) { r = 1.0F; g = 0.16F + 0.48F * (1.0F - t); b = 0.025F; }
+        else if (p.kind == SpellVfxKind::Stone) { r = 0.66F; g = 0.38F; b = 0.12F; }
+        else if (p.kind == SpellVfxKind::Veil) { r = 0.22F + 0.30F * t; g = 0.82F; b = 0.92F; }
+        const float s = p.size * (0.7F + fade * 1.4F);
+        glColor4f(r, g, b, fade * 0.72F);
+        glVertex3f(p.x - rightX * s, p.y - s, p.z - rightZ * s); glVertex3f(p.x + rightX * s, p.y - s, p.z + rightZ * s);
+        glVertex3f(p.x + rightX * s, p.y + s, p.z + rightZ * s); glVertex3f(p.x - rightX * s, p.y + s, p.z - rightZ * s);
+    }
+    glEnd(); glDepthMask(GL_TRUE); glDisable(GL_BLEND);
+}
+
 // The sky is authored in display-space colors so fogged terrain (which passes
 // through the shader's tone map) dissolves into the horizon without a seam.
 GLuint buildSkyDomeList() {
@@ -457,6 +521,7 @@ int main() {
     world::WorldStreamer streamedWorld;
     AbilitySystem magic; PlayerState player{1, "Wayfinder", 100, 100, 0, {"ember_lance", "tidal_bind", "stone_lift", "veil_sight"}}; EnemyState warden{101, "Thorn Warden", 120, false}; WorldPropState heart{"hollowmere.observatory_heart", false, ""};
     const std::array<const char*, 4> spells{"ember_lance", "tidal_bind", "stone_lift", "veil_sight"}; int selected = 0;
+    std::vector<SpellParticle> spellParticles;
     float heroX = 0.0F, heroZ = -26.0F, yaw = 0.0F;
     if (const char* spawn = std::getenv("AETHERWAKE_POS")) std::sscanf(spawn, "%f,%f,%f", &heroX, &heroZ, &yaw);
     const char* autoshot = std::getenv("AETHERWAKE_AUTOSHOT");
@@ -481,7 +546,7 @@ int main() {
                 if (cameraDistance < 1.0F) firstPersonPitch = std::clamp(firstPersonPitch - event.motion.yrel * 0.13F, -70.0F, 70.0F);
                 else cameraElevation = std::clamp(cameraElevation + event.motion.yrel * 0.13F, -28.0F, 65.0F);
             }
-            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) { if (event.key.key == SDLK_ESCAPE) running = false; if (event.key.key >= SDLK_1 && event.key.key <= SDLK_4) selected = static_cast<int>(event.key.key - SDLK_1); if (event.key.key == SDLK_SPACE && !won) { const auto cast = magic.cast(player, &warden, &heart, spells[selected]); won = cast.accepted && warden.health == 0; } }
+            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) { if (event.key.key == SDLK_ESCAPE) running = false; if (event.key.key >= SDLK_1 && event.key.key <= SDLK_4) selected = static_cast<int>(event.key.key - SDLK_1); if (event.key.key == SDLK_SPACE && !won) { const auto cast = magic.cast(player, &warden, &heart, spells[selected]); if (cast.accepted) spawnSpellVfx(spellParticles, selected, heroX, world::WorldStreamer::heightAt(heroX, heroZ), heroZ, std::sin(yaw * 0.017453293F), std::cos(yaw * 0.017453293F)); won = cast.accepted && warden.health == 0; } }
         }
 
         const bool* keys = SDL_GetKeyboardState(nullptr);
@@ -498,6 +563,7 @@ int main() {
         streamedWorld.resolveCollision(heroX, heroZ, 0.55F);
         const float heroY = std::max(world::WorldStreamer::heightAt(heroX, heroZ), world::WorldStreamer::waterLevel - 1.2F);
         streamedWorld.update(heroX, heroZ);
+        updateSpellVfx(spellParticles, dt);
 
         // Procedural locomotion: walk bob and forward lean while moving,
         // a slow breathing bob at rest, all smoothed to avoid pops.
@@ -654,6 +720,10 @@ int main() {
             glDisable(GL_BLEND);
             worldShader.stop();
         } else { streamedWorld.drawTerrain(); environment.draw(); }
+
+        // The particles are rendered after the world shader, but before the
+        // post chain, so their additive cores naturally feed into bloom.
+        drawSpellVfx(spellParticles, forwardX, forwardZ);
 
         if (post.ready) {
             // Resolve the multisampled scene, run the quarter-res bloom chain,
