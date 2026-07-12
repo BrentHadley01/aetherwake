@@ -297,10 +297,10 @@ def build_conifer(filename, seed, height, branch_rows, branch_length, needle_dar
                     shoot_direction = (limb_direction + limb_side * (0.24 if primary_index % 2 else -0.24)
                                        + Vector((0, 0, 0.12 if not is_spruce else -0.03))).normalized()
                     spray_cluster(rng, spray_verts, spray_faces, spray_side, primary_center, shoot_direction,
-                                  count=46 if high_detail else 10 if far_detail else 16,
-                                  blade_length=(0.24 if high_detail else 0.64 if far_detail else 0.46) * (1.0 - t * 0.16), spread=0.82,
-                                  width_min=0.030 if high_detail else 0.24 if far_detail else 0.18,
-                                  width_max=0.078 if high_detail else 0.46 if far_detail else 0.34)
+                                  count=66 if high_detail else 10 if far_detail else 14,
+                                  blade_length=(0.275 if high_detail else 0.64 if far_detail else 0.43) * (1.0 - t * 0.16), spread=0.82,
+                                  width_min=0.042 if high_detail else 0.24 if far_detail else 0.14,
+                                  width_max=0.112 if high_detail else 0.46 if far_detail else 0.27)
             for station in stations:
                 origin = trunk_point.lerp(tip, station)
                 fork_signs = (-1.0, 1.0) if high_detail else ((-1.0,) if (arm + row) % 2 else (1.0,))
@@ -317,15 +317,15 @@ def build_conifer(filename, seed, height, branch_rows, branch_length, needle_dar
                         bough_center = origin.lerp(twig_tip, 0.27 + bough_index * (0.62 / max(1, boughs - 1)))
                         bough_center += limb_side * rng.uniform(-0.08, 0.08)
                         spray_cluster(rng, spray_verts, spray_faces, spray_side, bough_center, fork,
-                                      count=40 if high_detail else 10 if far_detail else 18,
-                                      blade_length=(0.21 if high_detail else 0.62 if far_detail else 0.44) * (1.0 - t * 0.18), spread=0.70,
-                                      width_min=0.028 if high_detail else 0.23 if far_detail else 0.17,
-                                      width_max=0.075 if high_detail else 0.44 if far_detail else 0.33)
+                                      count=58 if high_detail else 10 if far_detail else 15,
+                                      blade_length=(0.245 if high_detail else 0.62 if far_detail else 0.42) * (1.0 - t * 0.18), spread=0.70,
+                                      width_min=0.040 if high_detail else 0.23 if far_detail else 0.14,
+                                      width_max=0.108 if high_detail else 0.44 if far_detail else 0.27)
     # Crown tuft at the very top.
-    spray_cluster(rng, spray_verts, spray_faces, spray_side, points[-1], Vector((0, 0, 1)), count=120 if high_detail else 24 if far_detail else 44,
-                  blade_length=0.27 if high_detail else 0.68 if far_detail else 0.52, spread=0.62,
-                  width_min=0.025 if high_detail else 0.24 if far_detail else 0.16,
-                  width_max=0.065 if high_detail else 0.44 if far_detail else 0.30)
+    spray_cluster(rng, spray_verts, spray_faces, spray_side, points[-1], Vector((0, 0, 1)), count=156 if high_detail else 24 if far_detail else 40,
+                  blade_length=0.30 if high_detail else 0.68 if far_detail else 0.48, spread=0.62,
+                  width_min=0.040 if high_detail else 0.24 if far_detail else 0.13,
+                  width_max=0.105 if high_detail else 0.44 if far_detail else 0.25)
 
     spray_mesh = bpy.data.meshes.new("NeedleSprays")
     spray_mesh.from_pydata(spray_verts, [], spray_faces)

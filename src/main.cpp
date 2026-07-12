@@ -737,7 +737,12 @@ int main() {
             worldShader.setVec3("uPlayer", heroX, heroY, heroZ);
             streamedWorld.drawGrass(3, eyeX, eyeZ, forwardX, forwardZ);
             worldShader.setInt("uMode", 0);
-            streamedWorld.drawDetails(detailLists.data(), static_cast<int>(detailLists.size()), eyeX, eyeZ, 8.0F, 420.0F, forwardX, forwardZ);
+            // Third-person keeps a small camera-obstruction bubble. In first
+            // person collision already prevents entering trunks, so excluding
+            // nearby trees only makes solid colliders appear invisible.
+            const float treeCameraExclusion = orbit < 1.0F ? 0.0F : 8.0F;
+            streamedWorld.drawDetails(detailLists.data(), static_cast<int>(detailLists.size()), eyeX, eyeZ,
+                                      treeCameraExclusion, 420.0F, forwardX, forwardZ);
             environment.draw();
             if (wayfinderList && cameraDistance > 1.0F) {
                 glPushMatrix(); glTranslatef(heroX, heroY + bob, heroZ); glRotatef(180.0F - yaw, 0.0F, 1.0F, 0.0F); glRotatef(lean, 1.0F, 0.0F, 0.0F); glCallList(wayfinderList); glPopMatrix();
