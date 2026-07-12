@@ -75,7 +75,7 @@ def spray_cluster(rng, verts, faces, face_sides, origin, direction, count, blade
         tilt = rng.uniform(-spread, spread)
         blade_dir = (direction + side * math.cos(angle) * spread + up * math.sin(angle) * spread + Vector((0, 0, tilt * 0.5 - 0.22))).normalized()
         length = blade_length * rng.uniform(0.6, 1.25)
-        width = length * rng.uniform(0.24, 0.38)
+        width = length * rng.uniform(0.13, 0.22)
         blade_side = blade_dir.cross(up if abs(blade_dir.dot(up)) < 0.9 else side).normalized() * width
         root = origin + direction * rng.uniform(-blade_length * 0.2, blade_length * 0.4)
         tip = root + blade_dir * length
@@ -117,34 +117,25 @@ def build_conifer(filename, seed, height, branch_rows, branch_length, needle_dar
         tip = trunk_point + direction * length + Vector((0, 0, 0.10 * length))
         wood.append(add_cone_between(trunk_point, tip, 0.045 * (1.0 - t * 0.5), 0.008, sides=5))
         branch_count += 1
-        # Dense needle sprays along the branch give the canopy real mass.
-        for station in (0.3, 0.55, 0.78, 1.0):
+        # Secondary twigs create a readable hierarchy: trunk -> limb -> twig
+        # -> needle cluster. Sky gaps are retained instead of hiding the crown
+        # in a simplified cone-shaped canopy shell.
+        limb_side = direction.cross(Vector((0, 0, 1))).normalized()
+        for station in (0.28, 0.52, 0.76, 0.96):
             origin = trunk_point.lerp(tip, station)
-            spray_cluster(rng, spray_verts, spray_faces, spray_side, origin, direction, count=11, blade_length=0.85 * (1.0 - t * 0.3), spread=0.62)
+            fork = (direction * 0.55 + limb_side * rng.uniform(-0.9, 0.9) + Vector((0, 0, rng.uniform(0.12, 0.42)))).normalized()
+            twig_tip = origin + fork * (0.34 + (1.0 - t) * 0.38)
+            twig = add_cone_between(origin, twig_tip, 0.020 * (1.0 - t * 0.45), 0.004, sides=4)
+            wood.append(twig)
+            # Dense individual needles are distributed along the twig. They
+            # make each bough read as foliage without reverting to a single
+            # smooth canopy volume.
+            for bough_index in range(3):
+                bough_center = origin.lerp(twig_tip, 0.30 + bough_index * 0.30) + limb_side * rng.uniform(-0.10, 0.10)
+                spray_cluster(rng, spray_verts, spray_faces, spray_side, bough_center, fork, count=15,
+                              blade_length=0.47 * (1.0 - t * 0.22), spread=0.55)
     # Crown tuft at the very top.
     spray_cluster(rng, spray_verts, spray_faces, spray_side, points[-1], Vector((0, 0, 1)), count=16, blade_length=0.8, spread=0.45)
-
-    # Dark interior shells give distant crowns solid mass; up close they read
-    # as the unlit inner canopy behind the needle sprays.
-    shell_material = solid_material("CanopyShell", (needle_dark[0] * 0.55, needle_dark[1] * 0.55, needle_dark[2] * 0.55, 1.0))
-    shells = []
-    shell_rows = 4
-    for row in range(shell_rows):
-        t = 0.30 + 0.62 * row / (shell_rows - 1)
-        shell_radius = (branch_length * (1.0 - t) ** 0.85 + 0.25) * 0.72
-        bpy.ops.mesh.primitive_cone_add(vertices=9, radius1=shell_radius, radius2=0.03,
-                                        depth=height * 0.30, location=(0, 0, height * t + height * 0.10))
-        shell = bpy.context.active_object
-        bpy.ops.object.mode_set(mode="EDIT"); bpy.ops.mesh.select_all(action="SELECT")
-        bpy.ops.mesh.subdivide(number_cuts=1); bpy.ops.object.mode_set(mode="OBJECT")
-        noise_texture = bpy.data.textures.new(f"shell-noise-{row}", type="CLOUDS")
-        noise_texture.noise_scale = 0.5
-        modifier = shell.modifiers.new("Displace", "DISPLACE")
-        modifier.texture = noise_texture
-        modifier.strength = 0.4
-        shell.data.materials.append(shell_material)
-        shells.append(shell)
-    wood.extend(shells)
 
     spray_mesh = bpy.data.meshes.new("NeedleSprays")
     spray_mesh.from_pydata(spray_verts, [], spray_faces)
