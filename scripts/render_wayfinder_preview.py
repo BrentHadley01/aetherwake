@@ -8,7 +8,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSET = os.environ.get("AETHERWAKE_PREVIEW_ASSET", "detail_wayfinder.glb")
 is_tree = any(name in ASSET for name in ("birch", "pine", "spruce", "snag"))
 is_landmark = "veiled_reach" in ASSET
-target_height = 2.5 if is_landmark else 4.5 if is_tree else 1.4
+is_ground_detail = any(name in ASSET for name in (
+    "mushroom", "pebble", "moss", "heather", "clover", "wildflower", "sedge", "grass", "lupine", "reed", "shrub"))
+target_height = 2.5 if is_landmark else 4.5 if is_tree else 0.38 if is_ground_detail else 1.4
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.gltf(filepath=os.path.join(ROOT, "assets", "models", ASSET))
 
@@ -22,7 +24,9 @@ ground.data.materials.append(ground_material)
 def point_at(obj, target):
     obj.rotation_euler = (Vector(target) - obj.location).to_track_quat("-Z", "Y").to_euler()
 
-bpy.ops.object.camera_add(location=(12.0, -18.0, 10.0) if is_landmark else (10.0, -15.0, 7.2) if is_tree else (4.6, -7.2, 3.1))
+bpy.ops.object.camera_add(location=(12.0, -18.0, 10.0) if is_landmark else
+                         (10.0, -15.0, 7.2) if is_tree else
+                         (1.65, -2.45, 1.15) if is_ground_detail else (4.6, -7.2, 3.1))
 camera = bpy.context.active_object
 point_at(camera, (0, 0, target_height))
 bpy.context.scene.camera = camera

@@ -180,7 +180,8 @@ void WorldStreamer::update(float playerX, float playerZ) {
                 // 6 wildflower, 7 heather, 8 mushrooms, 9 reeds, 10 shrub,
                 // 11 meadow grass, 14 birch (12/13 and 15 are render-only LODs),
                 // 16 clover, 17 sedge, 18 dry grass, 19 litter, 20 pebbles,
-                // 21 lupine, 22 moss mat.
+                // 21 lupine, 22 moss mat, 23 slab, 24 outcrop, 25 stump,
+                // 26 branch pile.
                 for (int attempt = 0; attempt < 104; ++attempt) {
                     const float px = originX + nextUnit() * chunkSize, pz = originZ + nextUnit() * chunkSize;
                     const float py = heightAt(px, pz);
@@ -192,20 +193,29 @@ void WorldStreamer::update(float playerX, float playerZ) {
                     const float pick = nextUnit();
                     // Forest density follows the moisture field, leaving natural clearings.
                     const float forest = fbm(px * 0.009F + 5.0F, pz * 0.009F + 5.0F, 3);
-                    const bool forested = forest > 0.40F - 0.25F * nextUnit();
                     const float moisture = fbm(px * 0.013F + 5.0F, pz * 0.013F + 5.0F, 3);
+                    const float biome = fbm(px * 0.0022F - 31.0F, pz * 0.0022F + 17.0F, 4);
+                    const bool meadow = biome > 0.47F && biome < 0.58F && slope < 0.28F;
+                    const bool birchGrove = biome > 0.62F && moisture > 0.51F;
+                    const bool spruceBasin = biome < 0.40F && moisture > 0.57F;
+                    const bool rockyUpland = py > 34.0F || slope > 0.31F;
+                    const bool forested = !meadow && forest > 0.40F - 0.25F * nextUnit();
                     const bool wetMargin = py > waterLevel + 0.10F && py < waterLevel + 3.0F;
                     if (wetMargin && slope < 0.16F && pick < 0.60F) {
                         chunk.details.push_back({px, py - 0.03F, pz, 0.7F + nextUnit() * 0.85F, nextUnit() * 360.0F, 9});
                     } else if (py <= waterLevel + 1.15F) continue;
                     else if (pick < 0.41F && slope < 0.42F && forested) {
                         const float species = nextUnit();
-                        const int type = moisture > 0.54F && species < 0.24F ? 14 : species < 0.58F ? 0 : species < 0.90F ? 1 : 2;
+                        int type;
+                        if (birchGrove) type = species < 0.70F ? 14 : species < 0.92F ? 1 : 2;
+                        else if (spruceBasin) type = species < 0.72F ? 1 : species < 0.88F ? 14 : 2;
+                        else type = species < 0.66F ? 0 : species < 0.92F ? 1 : 2;
                         chunk.details.push_back({px, py - 0.25F, pz, 0.75F + nextUnit() * 0.8F, nextUnit() * 360.0F, type});
                     } else if (pick < 0.56F && slope < 0.5F && forested) {
                         chunk.details.push_back({px, py - 0.06F, pz, 0.7F + nextUnit() * 0.9F, nextUnit() * 360.0F, 4});
                     } else if (pick < 0.63F && slope < 0.35F && forested && moisture > 0.48F) {
-                        chunk.details.push_back({px, py - 0.05F, pz, 0.6F + nextUnit() * 0.8F, nextUnit() * 360.0F, 5});
+                        const int deadfall = nextUnit() < 0.46F ? 26 : 5;
+                        chunk.details.push_back({px, py - 0.05F, pz, 0.6F + nextUnit() * 0.8F, nextUnit() * 360.0F, deadfall});
                     } else if (pick < 0.73F && slope < 0.22F && forested && moisture > 0.54F) {
                         chunk.details.push_back({px, py - 0.02F, pz, 0.55F + nextUnit() * 0.75F, nextUnit() * 360.0F, 8});
                     } else if (pick < 0.78F && slope < 0.26F && !forested) {
@@ -217,8 +227,12 @@ void WorldStreamer::update(float playerX, float playerZ) {
                     } else if (pick < 0.97F && slope < 0.35F && forested) {
                         chunk.details.push_back({px, py - 0.04F, pz, 0.65F + nextUnit() * 0.95F, nextUnit() * 360.0F, 10});
                     } else if (slope >= 0.18F || nextUnit() < 0.35F) {
-                        chunk.details.push_back({px, py - 0.35F, pz, 0.5F + nextUnit() * 1.3F, nextUnit() * 360.0F, 3});
+                        const float rockPick = nextUnit();
+                        const int rockType = rockyUpland && rockPick < 0.34F ? 24 : rockPick < 0.67F ? 23 : 3;
+                        chunk.details.push_back({px, py - 0.35F, pz, 0.5F + nextUnit() * 1.3F, nextUnit() * 360.0F, rockType});
                     }
+                    if (forested && slope < 0.26F && nextUnit() < 0.022F)
+                        chunk.details.push_back({px + nextUnit() * 2.0F - 1.0F, py - 0.03F, pz + nextUnit() * 2.0F - 1.0F, 0.65F + nextUnit() * 0.75F, nextUnit() * 360.0F, 25});
                     // A second, independent ground-layer decision creates
                     // overlapping ecological strata instead of one prop per
                     // sample. Each GLB is already a dense natural cluster.
@@ -232,7 +246,7 @@ void WorldStreamer::update(float playerX, float playerZ) {
                             else if (forested && moisture > 0.60F && layerPick < 0.34F) groundType = 22;      // moss cushions
                             else if (forested && layerPick < 0.70F) groundType = 19;                           // curled leaves/twigs
                             else if (forested) groundType = moisture > 0.52F ? 16 : 20;                       // clover or stones
-                            else if (moisture > 0.60F && layerPick < 0.20F) groundType = 21;                  // lupine pockets
+                            else if (meadow && moisture > 0.54F && layerPick < 0.32F) groundType = 21;       // lupine pockets
                             else if (moisture > 0.48F) groundType = 16;                                       // clover meadow
                             else if (layerPick < 0.78F) groundType = 18;                                      // dry fescue
                             else groundType = 20;                                                              // pebble scatter
@@ -289,7 +303,8 @@ void WorldStreamer::resolveCollision(float& x, float& z, float radius) const {
         for (const DetailInstance& instance : it->second.details) {
             float colliderRadius;
             if (instance.type <= 2 || instance.type == 14) colliderRadius = 0.38F * instance.scale; // tree/snag trunks
-            else if (instance.type == 3) colliderRadius = 1.30F * instance.scale;   // boulders
+            else if (instance.type == 3 || instance.type == 23 || instance.type == 24) colliderRadius = 1.30F * instance.scale;
+            else if (instance.type == 25) colliderRadius = 0.55F * instance.scale;
             else continue;                                                          // understory is walkable
             const float offsetX = x - instance.x, offsetZ = z - instance.z;
             const float distanceSquared = offsetX * offsetX + offsetZ * offsetZ;
@@ -314,14 +329,16 @@ void WorldStreamer::drawDetails(const unsigned int* lists, int listCount, float 
             const float cameraDx = instance.x - excludeX, cameraDz = instance.z - excludeZ;
             const float distanceSquared = cameraDx * cameraDx + cameraDz * cameraDz;
             const bool tree = instance.type <= 2 || instance.type == 14;
+            const bool microCover = instance.type >= 16 && instance.type <= 22;
+            const bool largeNatural = instance.type >= 23 && instance.type <= 26;
             const bool shadowPass = viewForwardX == 0.0F && viewForwardZ == 0.0F;
-            if (shadowPass && instance.type >= 16) continue; // micro-cover is sub-pixel in the shadow map
+            if (shadowPass && microCover) continue; // micro-cover is sub-pixel in the shadow map
             if (excludeRadius > 0.0F && distanceSquared < excludeRadius * excludeRadius && tree) continue;
             if (maxDistance > 0.0F) {
                 // Small props vanish into fog/grass long before the large tree
                 // silhouettes do. This is a visibility budget, not a quality
                 // reduction for anything the player can resolve.
-                const float typeDistance = tree ? maxDistance : instance.type <= 5 ? maxDistance * 0.52F : instance.type >= 16 ? maxDistance * 0.07F : maxDistance * 0.30F;
+                const float typeDistance = tree ? maxDistance : (instance.type <= 5 || largeNatural) ? maxDistance * 0.52F : microCover ? maxDistance * 0.07F : maxDistance * 0.30F;
                 if (distanceSquared > typeDistance * typeDistance) continue;
                 // The render back-end still clips off-screen geometry, but it
                 // has already paid to submit it. Cull the rear hemisphere on
