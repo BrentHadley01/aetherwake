@@ -209,8 +209,8 @@ int main() {
 
     // Blender-authored environment details, compiled once into display lists and
     // instanced across the streamed terrain by the world streamer.
-    std::array<GLuint, 6> detailLists{};
-    const std::array<const char*, 6> detailFiles{"assets/models/detail_pine.glb", "assets/models/detail_spruce.glb", "assets/models/detail_snag.glb", "assets/models/detail_boulder.glb", "assets/models/detail_fern.glb", "assets/models/detail_log.glb"};
+    std::array<GLuint, 12> detailLists{};
+    const std::array<const char*, 12> detailFiles{"assets/models/detail_pine.glb", "assets/models/detail_spruce.glb", "assets/models/detail_snag.glb", "assets/models/detail_boulder.glb", "assets/models/detail_fern.glb", "assets/models/detail_log.glb", "assets/models/detail_wildflower.glb", "assets/models/detail_heather.glb", "assets/models/detail_mushrooms.glb", "assets/models/detail_reeds.glb", "assets/models/detail_shrub.glb", "assets/models/detail_meadow_grass.glb"};
     for (std::size_t i = 0; i < detailFiles.size(); ++i) {
         renderer::GltfPreview detail;
         if (!detail.load(detailFiles[i])) continue;

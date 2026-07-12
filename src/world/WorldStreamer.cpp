@@ -159,8 +159,9 @@ void WorldStreamer::update(float playerX, float playerZ) {
             if (ring <= detailRadius) {
                 std::uint32_t rng = hash2(cx * 7 + 3, cz * 13 - 5) | 1U;
                 auto nextUnit = [&rng]() { rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; return static_cast<float>(rng & 0xFFFFFFU) / 16777215.0F; };
-                // Types: 0 pine, 1 spruce, 2 snag, 3 boulder, 4 fern, 5 log.
-                for (int attempt = 0; attempt < 72; ++attempt) {
+                // Types: 0 pine, 1 spruce, 2 snag, 3 boulder, 4 fern, 5 log,
+                // 6 wildflower, 7 heather, 8 mushrooms, 9 reeds, 10 shrub, 11 meadow grass.
+                for (int attempt = 0; attempt < 104; ++attempt) {
                     const float px = originX + nextUnit() * chunkSize, pz = originZ + nextUnit() * chunkSize;
                     const float py = heightAt(px, pz);
                     const float rise = std::abs(heightAt(px + 2.0F, pz) - heightAt(px - 2.0F, pz)) + std::abs(heightAt(px, pz + 2.0F) - heightAt(px, pz - 2.0F));
@@ -172,16 +173,30 @@ void WorldStreamer::update(float playerX, float playerZ) {
                     // Forest density follows the moisture field, leaving natural clearings.
                     const float forest = fbm(px * 0.009F + 5.0F, pz * 0.009F + 5.0F, 3);
                     const bool forested = forest > 0.40F - 0.25F * nextUnit();
-                    if (py <= waterLevel + 1.6F) continue;
-                    if (pick < 0.55F && slope < 0.42F && forested) {
+                    const float moisture = fbm(px * 0.013F + 5.0F, pz * 0.013F + 5.0F, 3);
+                    const bool wetMargin = py > waterLevel + 0.10F && py < waterLevel + 3.0F;
+                    if (wetMargin && slope < 0.16F && pick < 0.60F) {
+                        chunk.details.push_back({px, py - 0.03F, pz, 0.7F + nextUnit() * 0.85F, nextUnit() * 360.0F, 9});
+                    } else if (py <= waterLevel + 1.15F) continue;
+                    else if (pick < 0.41F && slope < 0.42F && forested) {
                         const float species = nextUnit();
                         const int type = species < 0.55F ? 0 : species < 0.86F ? 1 : 2;
                         chunk.details.push_back({px, py - 0.25F, pz, 0.75F + nextUnit() * 0.8F, nextUnit() * 360.0F, type});
-                    } else if (pick < 0.82F && slope < 0.5F && forested) {
+                    } else if (pick < 0.56F && slope < 0.5F && forested) {
                         chunk.details.push_back({px, py - 0.06F, pz, 0.7F + nextUnit() * 0.9F, nextUnit() * 360.0F, 4});
-                    } else if (pick < 0.89F && slope < 0.35F && forested) {
+                    } else if (pick < 0.63F && slope < 0.35F && forested && moisture > 0.48F) {
                         chunk.details.push_back({px, py - 0.05F, pz, 0.6F + nextUnit() * 0.8F, nextUnit() * 360.0F, 5});
-                    } else if (pick >= 0.89F && (slope >= 0.18F || nextUnit() < 0.35F)) {
+                    } else if (pick < 0.73F && slope < 0.22F && forested && moisture > 0.54F) {
+                        chunk.details.push_back({px, py - 0.02F, pz, 0.55F + nextUnit() * 0.75F, nextUnit() * 360.0F, 8});
+                    } else if (pick < 0.78F && slope < 0.26F && !forested) {
+                        chunk.details.push_back({px, py - 0.02F, pz, 0.65F + nextUnit() * 1.0F, nextUnit() * 360.0F, 11});
+                    } else if (pick < 0.86F && slope < 0.26F && !forested) {
+                        chunk.details.push_back({px, py - 0.02F, pz, 0.65F + nextUnit() * 0.95F, nextUnit() * 360.0F, 6});
+                    } else if (pick < 0.93F && slope < 0.32F && !forested && moisture < 0.62F) {
+                        chunk.details.push_back({px, py - 0.04F, pz, 0.75F + nextUnit() * 1.1F, nextUnit() * 360.0F, 7});
+                    } else if (pick < 0.97F && slope < 0.35F && forested) {
+                        chunk.details.push_back({px, py - 0.04F, pz, 0.65F + nextUnit() * 0.95F, nextUnit() * 360.0F, 10});
+                    } else if (slope >= 0.18F || nextUnit() < 0.35F) {
                         chunk.details.push_back({px, py - 0.35F, pz, 0.5F + nextUnit() * 1.3F, nextUnit() * 360.0F, 3});
                     }
                 }

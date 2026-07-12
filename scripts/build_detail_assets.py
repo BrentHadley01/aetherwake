@@ -247,6 +247,143 @@ def build_log():
     export_glb("detail_log.glb")
 
 
+def add_leaf_blade(verts, faces, center, direction, length, width):
+    """A gently cupped, two-sided leaf; small plants stay volumetric at close range."""
+    side = direction.cross(Vector((0, 0, 1))).normalized() * width
+    tip = center + direction * length + Vector((0, 0, length * 0.12))
+    mid = center + direction * (length * 0.52) + Vector((0, 0, length * 0.16))
+    i = len(verts)
+    verts.extend([center, mid - side, tip, mid + side])
+    faces.extend([(i, i + 1, i + 2), (i, i + 2, i + 3)])
+
+
+def build_wildflower():
+    """A varied meadow clump: stems, leaves, and modest moonlit flower heads."""
+    reset_scene()
+    rng = random.Random(47)
+    stem = solid_material("FlowerStems", (0.028, 0.105, 0.026, 1.0))
+    leaf = solid_material("FlowerLeaves", (0.036, 0.135, 0.038, 1.0))
+    petal = solid_material("MoonflowerPetals", (0.48, 0.29, 0.58, 1.0), roughness=0.72)
+    pollen = solid_material("MoonflowerPollen", (0.78, 0.50, 0.12, 1.0), roughness=0.58)
+    stems, leaves = [], []
+    leaf_verts, leaf_faces = [], []
+    for n in range(15):
+        a, r = rng.random() * math.tau, rng.uniform(0.04, 0.72)
+        root = Vector((math.cos(a) * r, math.sin(a) * r, 0))
+        h = rng.uniform(0.30, 0.82)
+        top = root + Vector((rng.uniform(-0.10, 0.10), rng.uniform(-0.10, 0.10), h))
+        stalk = add_cone_between(root, top, 0.012, 0.006, sides=5); stalk.data.materials.append(stem); stems.append(stalk)
+        for t in (0.26, 0.52):
+            add_leaf_blade(leaf_verts, leaf_faces, root.lerp(top, t), Vector((math.cos(a + math.pi * t * 3), math.sin(a + math.pi * t * 3), 0)), rng.uniform(0.10, 0.20), 0.035)
+        if n % 2 == 0:
+            for p in range(5):
+                angle = p * math.tau / 5.0
+                bpy.ops.mesh.primitive_uv_sphere_add(segments=10, ring_count=6, radius=0.070, location=top + Vector((math.cos(angle) * 0.075, math.sin(angle) * 0.075, 0)))
+                flower = bpy.context.active_object; flower.scale = (1.0, 0.42, 0.28); flower.data.materials.append(petal)
+            bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1, radius=0.045, location=top + Vector((0, 0, 0.008)))
+            bpy.context.active_object.data.materials.append(pollen)
+    mesh = bpy.data.meshes.new("WildflowerLeaves"); mesh.from_pydata(leaf_verts, [], leaf_faces); mesh.materials.append(leaf)
+    obj = bpy.data.objects.new("WildflowerLeaves", mesh); bpy.context.collection.objects.link(obj)
+    export_glb("detail_wildflower.glb")
+
+
+def build_heather():
+    reset_scene()
+    rng = random.Random(61)
+    twig = solid_material("HeatherTwig", (0.10, 0.045, 0.026, 1.0))
+    foliage = solid_material("HeatherFoliage", (0.055, 0.105, 0.047, 1.0))
+    bloom = solid_material("HeatherBloom", (0.38, 0.11, 0.38, 1.0), roughness=0.8)
+    for n in range(28):
+        a, r = rng.random() * math.tau, rng.uniform(0.02, 0.72)
+        root = Vector((math.cos(a) * r, math.sin(a) * r, 0))
+        top = root + Vector((math.cos(a) * rng.uniform(0.08, 0.25), math.sin(a) * rng.uniform(0.08, 0.25), rng.uniform(0.18, 0.50)))
+        branch = add_cone_between(root, top, 0.018, 0.005, sides=5); branch.data.materials.append(twig)
+        for b in range(3):
+            q = root.lerp(top, 0.42 + b * 0.20)
+            bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1, radius=0.09, location=q + Vector((rng.uniform(-0.07, 0.07), rng.uniform(-0.07, 0.07), 0.03)))
+            bpy.context.active_object.data.materials.append(foliage)
+        bpy.ops.mesh.primitive_uv_sphere_add(segments=8, ring_count=5, radius=0.045, location=top)
+        bud = bpy.context.active_object; bud.scale = (1.0, 1.0, 1.55); bud.data.materials.append(bloom)
+    export_glb("detail_heather.glb")
+
+
+def build_mushrooms():
+    reset_scene()
+    rng = random.Random(79)
+    stem = solid_material("MushroomStem", (0.43, 0.34, 0.22, 1.0))
+    cap = solid_material("MushroomCap", (0.26, 0.065, 0.026, 1.0), roughness=0.64)
+    for n in range(11):
+        a, r = rng.random() * math.tau, rng.uniform(0.05, 0.62)
+        h, rad = rng.uniform(0.08, 0.26), rng.uniform(0.07, 0.16)
+        loc = (math.cos(a) * r, math.sin(a) * r, h * 0.5)
+        bpy.ops.mesh.primitive_cone_add(vertices=10, radius1=rad * 0.34, radius2=rad * 0.24, depth=h, location=loc)
+        bpy.context.active_object.data.materials.append(stem)
+        bpy.ops.mesh.primitive_uv_sphere_add(segments=14, ring_count=8, radius=rad, location=(loc[0], loc[1], h))
+        head = bpy.context.active_object; head.scale = (1.0, 1.0, 0.44); head.data.materials.append(cap)
+    export_glb("detail_mushrooms.glb")
+
+
+def build_reeds():
+    reset_scene()
+    rng = random.Random(97)
+    reed = solid_material("ReedStem", (0.20, 0.25, 0.09, 1.0))
+    seed = solid_material("ReedSeedhead", (0.16, 0.075, 0.025, 1.0))
+    for n in range(22):
+        a, r = rng.random() * math.tau, rng.uniform(0.05, 0.85)
+        root = Vector((math.cos(a) * r, math.sin(a) * r, 0))
+        h = rng.uniform(0.75, 1.55)
+        top = root + Vector((rng.uniform(-0.14, 0.14), rng.uniform(-0.14, 0.14), h))
+        stalk = add_cone_between(root, top, 0.018, 0.010, sides=5); stalk.data.materials.append(reed)
+        if n % 3 != 0:
+            bpy.ops.mesh.primitive_uv_sphere_add(segments=10, ring_count=6, radius=0.055, location=top - Vector((0, 0, 0.12)))
+            head = bpy.context.active_object; head.scale = (0.72, 0.72, 2.8); head.data.materials.append(seed)
+    export_glb("detail_reeds.glb")
+
+
+def build_shrub():
+    reset_scene()
+    rng = random.Random(113)
+    wood = solid_material("ShrubWood", (0.075, 0.038, 0.020, 1.0))
+    leaf = solid_material("ShrubLeaves", (0.028, 0.098, 0.025, 1.0))
+    berry = solid_material("ShrubBerries", (0.16, 0.018, 0.025, 1.0), roughness=0.45)
+    for n in range(21):
+        a, r = rng.random() * math.tau, rng.uniform(0.02, 0.65)
+        root = Vector((math.cos(a) * r, math.sin(a) * r, 0))
+        top = root + Vector((math.cos(a) * rng.uniform(0.22, 0.62), math.sin(a) * rng.uniform(0.22, 0.62), rng.uniform(0.35, 0.82)))
+        branch = add_cone_between(root, top, 0.025, 0.006, sides=5); branch.data.materials.append(wood)
+        for b in range(3):
+            q = root.lerp(top, 0.38 + b * 0.22)
+            bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1, radius=0.13, location=q + Vector((rng.uniform(-0.12, 0.12), rng.uniform(-0.12, 0.12), 0.03)))
+            bpy.context.active_object.data.materials.append(leaf)
+        if n % 4 == 0:
+            bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1, radius=0.04, location=top)
+            bpy.context.active_object.data.materials.append(berry)
+    export_glb("detail_shrub.glb")
+
+
+def build_meadow_grass():
+    """Broad-leafed grass tussock, distinct from the fine wind-swayed ground cover."""
+    reset_scene()
+    rng = random.Random(131)
+    dark = solid_material("MeadowGrassDark", (0.035, 0.090, 0.026, 1.0))
+    lit = solid_material("MeadowGrassLit", (0.075, 0.155, 0.042, 1.0))
+    verts, faces = [], []
+    for blade in range(30):
+        a = blade * GOLDEN_ANGLE + rng.uniform(-0.16, 0.16)
+        root = Vector((math.cos(a) * rng.uniform(0.00, 0.20), math.sin(a) * rng.uniform(0.00, 0.20), 0))
+        direction = Vector((math.cos(a), math.sin(a), 0))
+        length, width = rng.uniform(0.45, 0.92), rng.uniform(0.015, 0.032)
+        side = direction.cross(Vector((0, 0, 1))).normalized() * width
+        mid = root + direction * (length * 0.20) + Vector((0, 0, length * 0.62))
+        tip = root + direction * (length * rng.uniform(0.44, 0.72)) + Vector((0, 0, length))
+        i = len(verts); verts.extend([root - side, root + side, mid + side * 0.65, mid - side * 0.65, tip])
+        faces.extend([(i, i + 1, i + 2, i + 3), (i + 3, i + 2, i + 4)])
+    mesh = bpy.data.meshes.new("MeadowGrass"); mesh.from_pydata(verts, [], faces); mesh.materials.append(dark); mesh.materials.append(lit)
+    for i, poly in enumerate(mesh.polygons): poly.material_index = i % 3 == 0
+    obj = bpy.data.objects.new("MeadowGrass", mesh); bpy.context.collection.objects.link(obj)
+    export_glb("detail_meadow_grass.glb")
+
+
 def build_wayfinder():
     """Grounded third-person mage silhouette used by the playable runtime."""
     reset_scene()
@@ -289,5 +426,11 @@ build_snag()
 build_boulder()
 build_fern()
 build_log()
+build_wildflower()
+build_heather()
+build_mushrooms()
+build_reeds()
+build_shrub()
+build_meadow_grass()
 build_wayfinder()
 print("DETAIL ASSETS EXPORTED")
