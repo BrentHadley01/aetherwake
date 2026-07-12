@@ -303,6 +303,8 @@ int main() {
             worldShader.setInt("uMode", 1);
             if (soilTexture) { glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D, soilTexture); }
             streamedWorld.drawTerrain();
+            worldShader.setInt("uMode", 3);
+            streamedWorld.drawGrass(1);
             worldShader.setInt("uMode", 0);
             streamedWorld.drawDetails(detailLists.data(), static_cast<int>(detailLists.size()));
             environment.draw();

@@ -48,7 +48,12 @@ float WorldStreamer::heightAt(float x, float z) {
     return -0.15F + (h - -0.15F) * t;
 }
 
-WorldStreamer::~WorldStreamer() { for (auto& [key, chunk] : chunks_) if (chunk.list) glDeleteLists(chunk.list, 1); }
+WorldStreamer::~WorldStreamer() {
+    for (auto& [key, chunk] : chunks_) {
+        if (chunk.list) glDeleteLists(chunk.list, 1);
+        if (chunk.grassList) glDeleteLists(chunk.grassList, 1);
+    }
+}
 
 namespace {
 void emitVertex(float x, float z, float step) {
@@ -80,6 +85,7 @@ void WorldStreamer::update(float playerX, float playerZ) {
         if ((chunk.list == 0 || chunk.lod != lod) && builds < buildBudget) {
             ++builds;
             if (chunk.list) glDeleteLists(chunk.list, 1);
+            if (chunk.grassList) { glDeleteLists(chunk.grassList, 1); chunk.grassList = 0; }
             const int resolution = lod == 0 ? 48 : lod == 1 ? 20 : lod == 2 ? 10 : 5;
             chunk.list = glGenLists(1); chunk.lod = lod;
             const float originX = cx * chunkSize, originZ = cz * chunkSize;
@@ -109,6 +115,42 @@ void WorldStreamer::update(float playerX, float playerZ) {
             }
             glEnd();
             glEndList();
+            // Swaying grass blades on the closest ring; texcoord.x carries the
+            // sway weight so the vertex shader can bend the tips.
+            if (lod == 0) {
+                std::uint32_t grassRng = hash2(cx * 31 + 7, cz * 17 + 3) | 1U;
+                auto grassUnit = [&grassRng]() { grassRng ^= grassRng << 13; grassRng ^= grassRng >> 17; grassRng ^= grassRng << 5; return static_cast<float>(grassRng & 0xFFFFFFU) / 16777215.0F; };
+                chunk.grassList = glGenLists(1);
+                glNewList(chunk.grassList, GL_COMPILE);
+                glBegin(GL_TRIANGLES);
+                for (int clumpIndex = 0; clumpIndex < 640; ++clumpIndex) {
+                    const float clumpX = originX + grassUnit() * chunkSize, clumpZ = originZ + grassUnit() * chunkSize;
+                    const float clumpY = heightAt(clumpX, clumpZ);
+                    if (clumpY < waterLevel + 0.8F) continue;
+                    if (std::sqrt(clumpX * clumpX + clumpZ * clumpZ) < 30.0F) continue;
+                    const float rise = std::abs(heightAt(clumpX + 2.0F, clumpZ) - heightAt(clumpX - 2.0F, clumpZ)) + std::abs(heightAt(clumpX, clumpZ + 2.0F) - heightAt(clumpX, clumpZ - 2.0F));
+                    if (rise / 8.0F > 0.5F) continue;
+                    const float moisture = fbm(clumpX * 0.013F + 5.0F, clumpZ * 0.013F + 5.0F, 3);
+                    const int blades = 4 + static_cast<int>(grassUnit() * 3.9F);
+                    for (int blade = 0; blade < blades; ++blade) {
+                        const float bx = clumpX + (grassUnit() - 0.5F), bz = clumpZ + (grassUnit() - 0.5F);
+                        const float by = heightAt(bx, bz);
+                        const float angle = grassUnit() * 6.2831853F, lean = 0.06F + grassUnit() * 0.22F;
+                        const float tall = 0.30F + grassUnit() * 0.45F;
+                        const float sideX = std::cos(angle) * 0.035F, sideZ = std::sin(angle) * 0.035F;
+                        const float tipX = bx - std::sin(angle) * lean, tipZ = bz + std::cos(angle) * lean;
+                        const float shade = 0.7F + grassUnit() * 0.45F;
+                        glNormal3f(0.0F, 1.0F, 0.0F);
+                        glColor3f((0.024F + 0.020F * (1.0F - moisture)) * shade, (0.045F + 0.032F * moisture) * shade, 0.020F * shade);
+                        glTexCoord2f(0.0F, 0.0F); glVertex3f(bx - sideX, by, bz - sideZ);
+                        glTexCoord2f(0.0F, 0.0F); glVertex3f(bx + sideX, by, bz + sideZ);
+                        glColor3f((0.040F + 0.026F * (1.0F - moisture)) * shade, (0.075F + 0.040F * moisture) * shade, 0.031F * shade);
+                        glTexCoord2f(1.0F, 0.0F); glVertex3f(tipX, by + tall, tipZ);
+                    }
+                }
+                glEnd();
+                glEndList();
+            }
             // Deterministic environment scatter, only in rings near the player.
             chunk.details.clear();
             if (ring <= detailRadius) {
@@ -143,6 +185,7 @@ void WorldStreamer::update(float playerX, float playerZ) {
             const int cz = static_cast<int>(static_cast<std::int32_t>(it->first & 0xFFFFFFFFU));
             if (std::max(std::abs(cx - centerX), std::abs(cz - centerZ)) > radius + 2) {
                 if (it->second.list) glDeleteLists(it->second.list, 1);
+                if (it->second.grassList) glDeleteLists(it->second.grassList, 1);
                 it = chunks_.erase(it);
             } else ++it;
         }
@@ -158,6 +201,16 @@ void WorldStreamer::drawTerrain(int maxRing) const {
         }
         const auto it = chunks_.find(key);
         if (it != chunks_.end() && it->second.list) glCallList(it->second.list);
+    }
+}
+
+void WorldStreamer::drawGrass(int maxRing) const {
+    for (const std::uint64_t key : visible_) {
+        const int cx = static_cast<int>(static_cast<std::int32_t>(key >> 32));
+        const int cz = static_cast<int>(static_cast<std::int32_t>(key & 0xFFFFFFFFU));
+        if (std::max(std::abs(cx - centerX_), std::abs(cz - centerZ_)) > maxRing) continue;
+        const auto it = chunks_.find(key);
+        if (it != chunks_.end() && it->second.grassList) glCallList(it->second.grassList);
     }
 }
 

@@ -47,6 +47,9 @@ void main() {
         specularStrength = 0.9;
         shininess = 130.0;
         alpha = 0.86;
+    } else if (uMode == 3) {
+        albedo = vTint.rgb;   // grass blades carry their albedo as vertex color
+        specularStrength = 0.015;
     } else {
         albedo = pow(texture2D(uAlbedo, vUv).rgb, vec3(2.2)) * vTint.rgb;
     }
@@ -81,7 +84,7 @@ void main() {
 
     float distanceFromCamera = length(vViewPosition);
     float density = 0.0019;
-    if (uMode == 1) density += 0.0012 * (1.0 - smoothstep(-8.0, 6.0, vWorld.y));  // mist pools in the basins
+    if (uMode == 1 || uMode == 3) density += 0.0012 * (1.0 - smoothstep(-8.0, 6.0, vWorld.y));  // mist pools in the basins
     float fog = 1.0 - exp(-distanceFromCamera * density);
     color = mix(color, vec3(0.016, 0.030, 0.045), clamp(fog, 0.0, 0.94));
 
