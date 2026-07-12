@@ -119,36 +119,52 @@ void WorldStreamer::update(float playerX, float playerZ) {
             }
             glEnd();
             glEndList();
-            // Swaying grass blades on the closest ring; texcoord.x carries the
-            // sway weight so the vertex shader can bend the tips.
-            if (lod == 0) {
+            // Swaying grass carpet; texcoord.x carries the sway weight so the
+            // vertex shader can bend the tips. The near ring is a dense carpet,
+            // the mid rings a sparser, taller stand that reads at distance.
+            if (lod <= 1) {
                 std::uint32_t grassRng = hash2(cx * 31 + 7, cz * 17 + 3) | 1U;
                 auto grassUnit = [&grassRng]() { grassRng ^= grassRng << 13; grassRng ^= grassRng >> 17; grassRng ^= grassRng << 5; return static_cast<float>(grassRng & 0xFFFFFFU) / 16777215.0F; };
                 chunk.grassList = glGenLists(1);
                 glNewList(chunk.grassList, GL_COMPILE);
                 glBegin(GL_TRIANGLES);
-                for (int clumpIndex = 0; clumpIndex < 640; ++clumpIndex) {
+                const int clumps = lod == 0 ? 13500 : 2100;
+                const float tallBias = lod == 0 ? 0.0F : 0.22F;
+                const float widthScale = lod == 0 ? 1.0F : 1.6F;
+                for (int clumpIndex = 0; clumpIndex < clumps; ++clumpIndex) {
                     const float clumpX = originX + grassUnit() * chunkSize, clumpZ = originZ + grassUnit() * chunkSize;
+                    if (std::sqrt(clumpX * clumpX + clumpZ * clumpZ) < 30.0F) continue;
+                    // Cheap noise gates run before any heightfield sampling.
+                    const float moisture = fbm(clumpX * 0.013F + 5.0F, clumpZ * 0.013F + 5.0F, 3);
+                    const float forest = fbm(clumpX * 0.009F + 5.0F, clumpZ * 0.009F + 5.0F, 3);
+                    // Meadows carry the densest carpet, forest floor stays
+                    // moderate, dry exposed ground goes patchy.
+                    float density = 0.35F + 0.62F * moisture;
+                    if (forest < 0.42F) density = std::min(1.0F, density * 1.3F);
+                    if (grassUnit() > density) continue;
                     const float clumpY = heightAt(clumpX, clumpZ);
                     if (clumpY < waterLevel + 0.8F) continue;
-                    if (std::sqrt(clumpX * clumpX + clumpZ * clumpZ) < 30.0F) continue;
-                    const float rise = std::abs(heightAt(clumpX + 2.0F, clumpZ) - heightAt(clumpX - 2.0F, clumpZ)) + std::abs(heightAt(clumpX, clumpZ + 2.0F) - heightAt(clumpX, clumpZ - 2.0F));
-                    if (rise / 8.0F > 0.5F) continue;
-                    const float moisture = fbm(clumpX * 0.013F + 5.0F, clumpZ * 0.013F + 5.0F, 3);
-                    const int blades = 4 + static_cast<int>(grassUnit() * 3.9F);
+                    const float rise = std::abs(heightAt(clumpX + 1.6F, clumpZ) - clumpY) + std::abs(heightAt(clumpX, clumpZ + 1.6F) - clumpY);
+                    if (rise / 3.2F > 0.55F) continue;                     // cliffs and scree stay bare
+                    const int blades = 4 + static_cast<int>(grassUnit() * 2.9F);
                     for (int blade = 0; blade < blades; ++blade) {
-                        const float bx = clumpX + (grassUnit() - 0.5F), bz = clumpZ + (grassUnit() - 0.5F);
-                        const float by = heightAt(bx, bz);
-                        const float angle = grassUnit() * 6.2831853F, lean = 0.06F + grassUnit() * 0.22F;
-                        const float tall = 0.30F + grassUnit() * 0.45F;
-                        const float sideX = std::cos(angle) * 0.035F, sideZ = std::sin(angle) * 0.035F;
+                        const float bx = clumpX + (grassUnit() - 0.5F) * 0.8F, bz = clumpZ + (grassUnit() - 0.5F) * 0.8F;
+                        // Blades reuse the clump height (sunk slightly) so the
+                        // carpet costs one heightfield sample per clump.
+                        const float by = clumpY - 0.04F;
+                        const float angle = grassUnit() * 6.2831853F, lean = 0.05F + grassUnit() * 0.24F;
+                        const bool seedHead = grassUnit() < 0.05F;
+                        const float tall = seedHead ? 0.85F + grassUnit() * 0.35F : 0.30F + grassUnit() * 0.48F + tallBias;
+                        const float bladeWidth = (seedHead ? 0.028F : 0.055F) * widthScale;
+                        const float sideX = std::cos(angle) * bladeWidth, sideZ = std::sin(angle) * bladeWidth;
                         const float tipX = bx - std::sin(angle) * lean, tipZ = bz + std::cos(angle) * lean;
                         const float shade = 0.7F + grassUnit() * 0.45F;
                         glNormal3f(0.0F, 1.0F, 0.0F);
                         glColor3f((0.024F + 0.020F * (1.0F - moisture)) * shade, (0.045F + 0.032F * moisture) * shade, 0.020F * shade);
                         glTexCoord2f(0.0F, 0.0F); glVertex3f(bx - sideX, by, bz - sideZ);
                         glTexCoord2f(0.0F, 0.0F); glVertex3f(bx + sideX, by, bz + sideZ);
-                        glColor3f((0.040F + 0.026F * (1.0F - moisture)) * shade, (0.075F + 0.040F * moisture) * shade, 0.031F * shade);
+                        if (seedHead) glColor3f(0.075F * shade, 0.095F * shade, 0.042F * shade);   // pale dry seed tip
+                        else glColor3f((0.040F + 0.026F * (1.0F - moisture)) * shade, (0.075F + 0.040F * moisture) * shade, 0.031F * shade);
                         glTexCoord2f(1.0F, 0.0F); glVertex3f(tipX, by + tall, tipZ);
                     }
                 }
