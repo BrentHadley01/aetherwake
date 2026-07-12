@@ -378,6 +378,9 @@ int main() {
     }
     if (!context) { SDL_DestroyWindow(window); SDL_Quit(); return 1; }
     SDL_GL_SetSwapInterval(1);
+    // Capture relative mouse deltas so turning has no screen-edge limit and
+    // the pointer does not leave the game while looking around.
+    SDL_SetWindowRelativeMouseMode(window, true);
     activeTexture = reinterpret_cast<ActiveTextureFn>(SDL_GL_GetProcAddress("glActiveTexture"));
     genFramebuffers = reinterpret_cast<GenFramebuffersFn>(SDL_GL_GetProcAddress("glGenFramebuffers"));
     bindFramebuffer = reinterpret_cast<BindFramebufferFn>(SDL_GL_GetProcAddress("glBindFramebuffer"));
@@ -459,11 +462,25 @@ int main() {
     const char* autoshot = std::getenv("AETHERWAKE_AUTOSHOT");
     const bool autoexit = std::getenv("AETHERWAKE_AUTOEXIT") != nullptr;
     bool running = true, won = false; Uint64 previous = SDL_GetTicks(); int frame = 0; float elapsed = 0.0F; Uint64 steadyStart = 0;
+    // 0 = first person at the Wayfinder's eye; larger values form the
+    // collision-safe third-person camera boom.
+    float cameraDistance = 20.0F;
+    float cameraElevation = 18.0F;
 
     while (running) {
         const Uint64 now = SDL_GetTicks(); const float dt = std::min(0.05F, static_cast<float>(now - previous) / 1000.0F); previous = now; elapsed += dt; ++frame;
         if (frame == 100) steadyStart = now;   // streaming burst is over; measure real frame rate from here
-        SDL_Event event; while (SDL_PollEvent(&event)) { if (event.type == SDL_EVENT_QUIT) running = false; if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) { if (event.key.key == SDLK_ESCAPE) running = false; if (event.key.key >= SDLK_1 && event.key.key <= SDLK_4) selected = static_cast<int>(event.key.key - SDLK_1); if (event.key.key == SDLK_SPACE && !won) { const auto cast = magic.cast(player, &warden, &heart, spells[selected]); won = cast.accepted && warden.health == 0; } } }
+        SDL_Event event; while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_EVENT_QUIT) running = false;
+            if (event.type == SDL_EVENT_MOUSE_WHEEL) cameraDistance = std::clamp(cameraDistance - event.wheel.y * 2.2F, 0.0F, 30.0F);
+            if (event.type == SDL_EVENT_MOUSE_MOTION) {
+                // Mouse-right turns right; mouse-up lowers the third-person
+                // boom and therefore looks upward, matching common RPG input.
+                yaw -= event.motion.xrel * 0.13F;
+                cameraElevation = std::clamp(cameraElevation + event.motion.yrel * 0.13F, -28.0F, 65.0F);
+            }
+            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) { if (event.key.key == SDLK_ESCAPE) running = false; if (event.key.key >= SDLK_1 && event.key.key <= SDLK_4) selected = static_cast<int>(event.key.key - SDLK_1); if (event.key.key == SDLK_SPACE && !won) { const auto cast = magic.cast(player, &warden, &heart, spells[selected]); won = cast.accepted && warden.health == 0; } }
+        }
 
         const bool* keys = SDL_GetKeyboardState(nullptr);
         const float speed = (keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT] ? 24.0F : 9.0F) * dt;
@@ -475,8 +492,6 @@ int main() {
         // mapping used it for A, making lateral movement feel inverted.
         if (keys[SDL_SCANCODE_A]) { heroX += forwardZ * speed; heroZ -= forwardX * speed; }
         if (keys[SDL_SCANCODE_D]) { heroX -= forwardZ * speed; heroZ += forwardX * speed; }
-        if (keys[SDL_SCANCODE_Q] || keys[SDL_SCANCODE_LEFT]) yaw += 80.0F * dt;
-        if (keys[SDL_SCANCODE_E] || keys[SDL_SCANCODE_RIGHT]) yaw -= 80.0F * dt;
         heroX = std::clamp(heroX, -4000.0F, 4000.0F); heroZ = std::clamp(heroZ, -4000.0F, 4000.0F);
         streamedWorld.resolveCollision(heroX, heroZ, 0.55F);
         const float heroY = std::max(world::WorldStreamer::heightAt(heroX, heroZ), world::WorldStreamer::waterLevel - 1.2F);
@@ -541,7 +556,7 @@ int main() {
             shadowActive = true;
         }
 
-        char title[300]; std::snprintf(title, sizeof(title), "Aetherwake | %s | Warden %d | %d chunks | WASD move, Q/E turn, Shift sprint, Space cast | %s", magic.find(spells[selected])->displayName.c_str(), warden.health, streamedWorld.loadedChunkCount(), worldShader.status().c_str()); SDL_SetWindowTitle(window, title);
+        char title[340]; std::snprintf(title, sizeof(title), "Aetherwake | %s | Warden %d | %d chunks | WASD move, mouse look, wheel camera, Shift sprint, Space cast | %s", magic.find(spells[selected])->displayName.c_str(), warden.health, streamedWorld.loadedChunkCount(), worldShader.status().c_str()); SDL_SetWindowTitle(window, title);
 
         int width, height; SDL_GetWindowSizeInPixels(window, &width, &height); glViewport(0, 0, width, height);
         if (postCapable && (post.width != width || post.height != height)) { destroyPostTargets(post); createPostTargets(post, width, height); }
@@ -549,9 +564,11 @@ int main() {
         glClearColor(cycle.horizonDisplay[0], cycle.horizonDisplay[1], cycle.horizonDisplay[2], 1.0F); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glMatrixMode(GL_PROJECTION); glLoadIdentity(); perspective(56.0F, static_cast<float>(width) / height, 0.2F, 3000.0F); glMatrixMode(GL_MODELVIEW); glLoadIdentity();
 
-        const float orbit = 20.0F;
-        float eyeX = heroX - forwardX * orbit, eyeZ = heroZ - forwardZ * orbit;
-        float eyeY = heroY + 8.5F;
+        const float orbit = cameraDistance;
+        const float elevationRadians = cameraElevation * 0.017453293F;
+        const float horizontalOrbit = orbit * std::cos(elevationRadians);
+        float eyeX = heroX - forwardX * horizontalOrbit, eyeZ = heroZ - forwardZ * horizontalOrbit;
+        float eyeY = heroY + 2.35F + orbit * std::sin(elevationRadians);
         // Keep the whole camera boom above the terrain so ridges never swallow the view.
         for (int sample = 0; sample <= 6; ++sample) {
             const float t = static_cast<float>(sample) / 6.0F;
@@ -563,7 +580,10 @@ int main() {
         if (freeCameraActive < 0) { const char* spec = std::getenv("AETHERWAKE_CAM"); freeCameraActive = spec && std::sscanf(spec, "%f,%f,%f,%f,%f,%f", &freeCamera[0], &freeCamera[1], &freeCamera[2], &freeCamera[3], &freeCamera[4], &freeCamera[5]) == 6 ? 1 : 0; }
         float viewMatrix[16], inverseView[16];
         if (freeCameraActive == 1) { eyeX = freeCamera[0]; eyeY = freeCamera[1]; eyeZ = freeCamera[2]; buildView(eyeX, eyeY, eyeZ, freeCamera[3], freeCamera[4], freeCamera[5], viewMatrix, inverseView); heroX = freeCamera[0]; heroZ = freeCamera[2]; }
-        else buildView(eyeX, eyeY, eyeZ, heroX + forwardX * 6.0F, heroY + 2.4F, heroZ + forwardZ * 6.0F, viewMatrix, inverseView);
+        else if (orbit < 1.0F) {
+            const float lookDistance = 6.0F, horizontalLook = std::cos(elevationRadians) * lookDistance;
+            buildView(eyeX, eyeY, eyeZ, eyeX + forwardX * horizontalLook, eyeY + std::sin(elevationRadians) * lookDistance, eyeZ + forwardZ * horizontalLook, viewMatrix, inverseView);
+        } else buildView(eyeX, eyeY, eyeZ, heroX + forwardX * 6.0F, heroY + 2.4F, heroZ + forwardZ * 6.0F, viewMatrix, inverseView);
         glMultMatrixf(viewMatrix);
 
         // Sky first: shader-driven cloud dome plus fixed-function stars/moon,
@@ -616,7 +636,7 @@ int main() {
             worldShader.setInt("uMode", 0);
             streamedWorld.drawDetails(detailLists.data(), static_cast<int>(detailLists.size()), eyeX, eyeZ, 8.0F, 420.0F, forwardX, forwardZ);
             environment.draw();
-            if (wayfinderList) {
+            if (wayfinderList && cameraDistance > 1.0F) {
                 glPushMatrix(); glTranslatef(heroX, heroY + bob, heroZ); glRotatef(180.0F - yaw, 0.0F, 1.0F, 0.0F); glRotatef(lean, 1.0F, 0.0F, 0.0F); glCallList(wayfinderList); glPopMatrix();
             }
             // Water last: a camera-following sheet blended over the flooded basins.
