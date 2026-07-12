@@ -209,8 +209,8 @@ int main() {
 
     // Blender-authored environment details, compiled once into display lists and
     // instanced across the streamed terrain by the world streamer.
-    std::array<GLuint, 12> detailLists{};
-    const std::array<const char*, 12> detailFiles{"assets/models/detail_pine.glb", "assets/models/detail_spruce.glb", "assets/models/detail_snag.glb", "assets/models/detail_boulder.glb", "assets/models/detail_fern.glb", "assets/models/detail_log.glb", "assets/models/detail_wildflower.glb", "assets/models/detail_heather.glb", "assets/models/detail_mushrooms.glb", "assets/models/detail_reeds.glb", "assets/models/detail_shrub.glb", "assets/models/detail_meadow_grass.glb"};
+    std::array<GLuint, 14> detailLists{};
+    const std::array<const char*, 14> detailFiles{"assets/models/detail_pine.glb", "assets/models/detail_spruce.glb", "assets/models/detail_snag.glb", "assets/models/detail_boulder.glb", "assets/models/detail_fern.glb", "assets/models/detail_log.glb", "assets/models/detail_wildflower.glb", "assets/models/detail_heather.glb", "assets/models/detail_mushrooms.glb", "assets/models/detail_reeds.glb", "assets/models/detail_shrub.glb", "assets/models/detail_meadow_grass.glb", "assets/models/detail_pine_lod.glb", "assets/models/detail_spruce_lod.glb"};
     for (std::size_t i = 0; i < detailFiles.size(); ++i) {
         renderer::GltfPreview detail;
         if (!detail.load(detailFiles[i])) continue;
@@ -270,7 +270,9 @@ int main() {
             glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
             glEnable(GL_POLYGON_OFFSET_FILL); glPolygonOffset(2.5F, 6.0F);
             streamedWorld.drawTerrain(4);
-            streamedWorld.drawDetails(detailLists.data(), static_cast<int>(detailLists.size()));
+            // Beyond this radius shadows are imperceptible in the moon haze;
+            // avoiding their depth submission leaves the visible scene intact.
+            streamedWorld.drawDetails(detailLists.data(), static_cast<int>(detailLists.size()), heroX, heroZ, 0.0F, 180.0F);
             environment.draw();
             if (wayfinderList) {
                 glPushMatrix(); glTranslatef(heroX, heroY, heroZ); glRotatef(180.0F - yaw, 0.0F, 1.0F, 0.0F); glCallList(wayfinderList); glPopMatrix();
@@ -338,7 +340,7 @@ int main() {
             worldShader.setInt("uMode", 3);
             streamedWorld.drawGrass(1);
             worldShader.setInt("uMode", 0);
-            streamedWorld.drawDetails(detailLists.data(), static_cast<int>(detailLists.size()), eyeX, eyeZ, 8.0F);
+            streamedWorld.drawDetails(detailLists.data(), static_cast<int>(detailLists.size()), eyeX, eyeZ, 8.0F, 420.0F, forwardX, forwardZ);
             environment.draw();
             if (wayfinderList) {
                 glPushMatrix(); glTranslatef(heroX, heroY, heroZ); glRotatef(180.0F - yaw, 0.0F, 1.0F, 0.0F); glCallList(wayfinderList); glPopMatrix();

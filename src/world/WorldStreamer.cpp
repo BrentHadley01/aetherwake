@@ -240,15 +240,38 @@ void WorldStreamer::drawGrass(int maxRing) const {
     }
 }
 
-void WorldStreamer::drawDetails(const unsigned int* lists, int listCount, float excludeX, float excludeZ, float excludeRadius) const {
+void WorldStreamer::drawDetails(const unsigned int* lists, int listCount, float excludeX, float excludeZ, float excludeRadius,
+                                float maxDistance, float viewForwardX, float viewForwardZ) const {
     if (!lists || listCount <= 0) return;
     for (const std::uint64_t key : visible_) {
         const auto it = chunks_.find(key);
         if (it == chunks_.end()) continue;
         for (const DetailInstance& instance : it->second.details) {
             const float cameraDx = instance.x - excludeX, cameraDz = instance.z - excludeZ;
-            if (excludeRadius > 0.0F && cameraDx * cameraDx + cameraDz * cameraDz < excludeRadius * excludeRadius && instance.type <= 2) continue;
-            const unsigned int list = lists[instance.type % listCount];
+            const float distanceSquared = cameraDx * cameraDx + cameraDz * cameraDz;
+            if (excludeRadius > 0.0F && distanceSquared < excludeRadius * excludeRadius && instance.type <= 2) continue;
+            if (maxDistance > 0.0F) {
+                // Small props vanish into fog/grass long before the large tree
+                // silhouettes do. This is a visibility budget, not a quality
+                // reduction for anything the player can resolve.
+                const float typeDistance = instance.type <= 2 ? maxDistance : instance.type <= 5 ? maxDistance * 0.52F : maxDistance * 0.30F;
+                if (distanceSquared > typeDistance * typeDistance) continue;
+                // The render back-end still clips off-screen geometry, but it
+                // has already paid to submit it. Cull the rear hemisphere on
+                // the CPU with a generous edge margin to preserve peripheral
+                // vision and third-person camera movement.
+                if ((viewForwardX != 0.0F || viewForwardZ != 0.0F) && distanceSquared > 34.0F * 34.0F) {
+                    const float distance = std::sqrt(distanceSquared);
+                    if ((cameraDx * viewForwardX + cameraDz * viewForwardZ) / distance < -0.18F) continue;
+                }
+            }
+            int resolvedType = instance.type;
+            // Full branch and needle geometry is only distinguishable nearby.
+            // The far assets were authored from the same generator and retain
+            // the silhouette, so this is perceptual LOD rather than a visual
+            // quality toggle.
+            if (instance.type <= 1 && listCount >= 14 && distanceSquared > 125.0F * 125.0F) resolvedType += 12;
+            const unsigned int list = lists[resolvedType % listCount];
             if (!list) continue;
             glPushMatrix();
             glTranslatef(instance.x, instance.y, instance.z);

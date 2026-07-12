@@ -413,6 +413,12 @@ build_conifer("detail_pine.glb", seed=7, height=11.5, branch_rows=30, branch_len
               needle_dark=(0.022, 0.060, 0.028, 1.0), needle_lit=(0.038, 0.095, 0.040, 1.0))
 build_conifer("detail_spruce.glb", seed=19, height=8.0, branch_rows=26, branch_length=3.1,
               needle_dark=(0.020, 0.052, 0.032, 1.0), needle_lit=(0.033, 0.082, 0.048, 1.0))
+# Far trees retain the authored silhouette but use fewer independently resolved
+# branch clusters; they are selected only beyond readable needle distance.
+build_conifer("detail_pine_lod.glb", seed=7, height=11.5, branch_rows=10, branch_length=2.6,
+              needle_dark=(0.022, 0.060, 0.028, 1.0), needle_lit=(0.038, 0.095, 0.040, 1.0))
+build_conifer("detail_spruce_lod.glb", seed=19, height=8.0, branch_rows=9, branch_length=3.1,
+              needle_dark=(0.020, 0.052, 0.032, 1.0), needle_lit=(0.033, 0.082, 0.048, 1.0))
 build_snag()
 build_boulder()
 build_fern()
