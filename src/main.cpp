@@ -365,7 +365,7 @@ CycleState computeCycle(float dayTime) {
         for (int i = 0; i < 3; ++i) out[i] = night[i] + (day[i] - night[i]) * dayF;
     };
     if (daylight) {
-        const float horizonSun[3] = {1.25F, 0.62F, 0.32F}, noonSun[3] = {1.30F, 1.22F, 1.05F};
+        const float horizonSun[3] = {1.08F, 0.54F, 0.28F}, noonSun[3] = {0.98F, 0.93F, 0.82F};
         const float lift = smoothstepf(0.0F, 0.05F, sunY), warm = smoothstepf(0.04F, 0.32F, sunY);
         for (int i = 0; i < 3; ++i) cycle.lightColor[i] = (horizonSun[i] + (noonSun[i] - horizonSun[i]) * warm) * lift;
     } else {
@@ -373,11 +373,11 @@ CycleState computeCycle(float dayTime) {
         const float lift = smoothstepf(0.0F, 0.07F, -sunY) * 0.95F;
         for (int i = 0; i < 3; ++i) cycle.lightColor[i] = moon[i] * lift;
     }
-    const float ambientNight[3] = {0.022F, 0.032F, 0.048F}, ambientDay[3] = {0.16F, 0.20F, 0.27F};
-    const float fogNight[3] = {0.016F, 0.030F, 0.045F}, fogDay[3] = {0.26F, 0.34F, 0.44F};
-    const float zenithNight[3] = {0.004F, 0.010F, 0.022F}, zenithDay[3] = {0.07F, 0.16F, 0.36F};
-    const float cloudDarkNight[3] = {0.115F, 0.14F, 0.175F}, cloudDarkDay[3] = {0.50F, 0.55F, 0.63F};
-    const float cloudLitNight[3] = {0.20F, 0.225F, 0.26F}, cloudLitDay[3] = {0.82F, 0.85F, 0.90F};
+    const float ambientNight[3] = {0.022F, 0.032F, 0.048F}, ambientDay[3] = {0.085F, 0.115F, 0.16F};
+    const float fogNight[3] = {0.016F, 0.030F, 0.045F}, fogDay[3] = {0.10F, 0.16F, 0.24F};
+    const float zenithNight[3] = {0.004F, 0.010F, 0.022F}, zenithDay[3] = {0.025F, 0.080F, 0.22F};
+    const float cloudDarkNight[3] = {0.115F, 0.14F, 0.175F}, cloudDarkDay[3] = {0.25F, 0.30F, 0.36F};
+    const float cloudLitNight[3] = {0.20F, 0.225F, 0.26F}, cloudLitDay[3] = {0.56F, 0.61F, 0.68F};
     blend(cycle.ambient, ambientNight, ambientDay);
     blend(cycle.fogLinear, fogNight, fogDay);
     blend(cycle.zenithLinear, zenithNight, zenithDay);
@@ -559,6 +559,7 @@ int main() {
     float cameraDistance = 20.0F;
     float cameraElevation = 18.0F;
     float firstPersonPitch = 0.0F;
+    if (const char* distance = std::getenv("AETHERWAKE_CAMERA_DISTANCE")) cameraDistance = std::clamp(static_cast<float>(std::atof(distance)), 0.0F, 30.0F);
 
     while (running) {
         const Uint64 now = SDL_GetTicks(); const float dt = std::min(0.05F, static_cast<float>(now - previous) / 1000.0F); previous = now; elapsed += dt; ++frame;
@@ -778,6 +779,7 @@ int main() {
             postShader.setInt("uPass", 2); glBindTexture(GL_TEXTURE_2D, post.blurTex[0]); drawFullscreenQuad();
             bindFramebuffer(GL_FRAMEBUFFER, 0); glViewport(0, 0, width, height);
             postShader.setInt("uPass", 3);
+            postShader.setVec3("uPixel", 1.0F / width, 1.0F / height, 0.0F);
             if (activeTexture) { activeTexture(GL_TEXTURE3); glBindTexture(GL_TEXTURE_2D, post.blurTex[1]); activeTexture(GL_TEXTURE0); }
             glBindTexture(GL_TEXTURE_2D, post.resolveTex);
             drawFullscreenQuad();

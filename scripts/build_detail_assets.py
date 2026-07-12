@@ -376,35 +376,130 @@ def build_meadow_grass():
 
 
 def build_wayfinder():
-    """Grounded third-person mage silhouette used by the playable runtime."""
+    """Detailed grounded third-person mage with a readable human silhouette."""
     reset_scene()
     cloth = textured_material("WayfinderWool", "wayfinder_wool_albedo.png", roughness=0.82)
     leather = textured_material("WayfinderLeather", "wet_bark_albedo.png", roughness=0.68)
-    face = solid_material("HoodShadow", (0.008, 0.010, 0.014, 1.0), roughness=0.95)
+    face = solid_material("HoodShadow", (0.0003, 0.0005, 0.0008, 1.0), roughness=0.98)
+    skin = solid_material("WeatheredHands", (0.31, 0.19, 0.13, 1.0), roughness=0.74)
+    trim = solid_material("CloakTrim", (0.035, 0.055, 0.068, 1.0), roughness=0.78)
     metal = solid_material("StaffIron", (0.08, 0.10, 0.12, 1.0), roughness=0.38)
     rune = solid_material("StaffRune", (0.01, 0.68, 0.52, 1.0), roughness=0.22)
 
-    # Layered travel cloak: a high-sided mantle over a tapered robe.
-    bpy.ops.mesh.primitive_cone_add(vertices=40, radius1=0.72, radius2=0.30, depth=1.95, location=(0, 0, 1.0))
-    robe = bpy.context.active_object; robe.name = "WayfinderRobe"; robe.data.materials.append(cloth)
-    bevel = robe.modifiers.new("Cloth edge", "BEVEL"); bevel.width = 0.035; bevel.segments = 2
-    bpy.ops.mesh.primitive_cone_add(vertices=40, radius1=0.58, radius2=0.20, depth=0.72, location=(0, -0.06, 1.90))
-    mantle = bpy.context.active_object; mantle.name = "WayfinderMantle"; mantle.data.materials.append(cloth)
-    # Hood outer shell and recessed face.
-    bpy.ops.mesh.primitive_uv_sphere_add(segments=32, ring_count=16, radius=0.42, location=(0, 0, 2.30))
-    hood = bpy.context.active_object; hood.name = "WayfinderHood"; hood.scale = (1.0, 0.92, 1.12); hood.data.materials.append(cloth); bpy.ops.object.shade_smooth()
-    bpy.ops.mesh.primitive_uv_sphere_add(segments=24, ring_count=12, radius=0.29, location=(0, -0.30, 2.27))
-    hood_void = bpy.context.active_object; hood_void.name = "HoodShadow"; hood_void.scale = (0.80, 0.25, 0.95); hood_void.data.materials.append(face)
-    # Arms angled into a believable staff-bearing pose.
-    left_arm = add_cone_between(Vector((-0.33, -0.02, 1.86)), Vector((-0.63, -0.32, 1.20)), 0.16, 0.11, sides=14)
-    right_arm = add_cone_between(Vector((0.33, -0.02, 1.86)), Vector((0.62, -0.34, 1.46)), 0.16, 0.10, sides=14)
-    left_arm.data.materials.append(cloth); right_arm.data.materials.append(cloth)
-    # Staff, iron cage, and emissive-looking focus.
-    staff = add_cone_between(Vector((0.70, -0.38, 0.10)), Vector((0.70, -0.38, 2.88)), 0.052, 0.035, sides=12)
+    def beveled_cube(name, location, scale, material, bevel=0.04):
+        bpy.ops.mesh.primitive_cube_add(location=location)
+        obj = bpy.context.active_object; obj.name = name; obj.scale = scale; obj.data.materials.append(material)
+        modifier = obj.modifiers.new(f"{name} softened edges", "BEVEL"); modifier.width = bevel; modifier.segments = 3
+        return obj
+
+    # Separate boots and legs prevent the robe from reading as a single cone.
+    for side in (-1, 1):
+        beveled_cube(f"TravelBoot{side}", (side * 0.18, -0.10, 0.14), (0.13, 0.23, 0.14), leather, 0.045)
+        leg = add_cone_between(Vector((side * 0.18, 0.02, 0.28)), Vector((side * 0.16, 0.02, 1.05)), 0.13, 0.12, sides=16)
+        leg.name = f"TrouserLeg{side}"; leg.data.materials.append(trim)
+
+    # Multi-ring skirt mesh with radial cloth folds and an irregular hem.
+    segments = 48
+    rings = [(0.22, 0.60), (0.55, 0.55), (0.95, 0.45), (1.28, 0.34), (1.56, 0.31)]
+    verts, faces = [], []
+    for ring_index, (z, radius) in enumerate(rings):
+        for i in range(segments):
+            angle = i / segments * math.tau
+            fold = math.sin(angle * 7.0 + ring_index * 0.38) * (0.055 * (1.0 - ring_index / len(rings)))
+            hem = math.sin(angle * 5.0 + 0.7) * 0.035 if ring_index == 0 else 0.0
+            verts.append((math.cos(angle) * (radius + fold), math.sin(angle) * (radius * 0.72 + fold * 0.5), z + hem))
+    for r in range(len(rings) - 1):
+        for i in range(segments):
+            n = (i + 1) % segments; a = r * segments + i; b = r * segments + n
+            c = (r + 1) * segments + n; d = (r + 1) * segments + i
+            faces.append((a, b, c, d))
+    mesh = bpy.data.meshes.new("FoldedRobeMesh"); mesh.from_pydata(verts, [], faces); mesh.materials.append(cloth)
+    robe_uv = mesh.uv_layers.new(name="RobeUV")
+    for polygon in mesh.polygons:
+        for loop_index in polygon.loop_indices:
+            vertex = mesh.loops[loop_index].vertex_index
+            robe_uv.data[loop_index].uv = ((vertex % segments) / segments, (vertex // segments) / (len(rings) - 1))
+    robe = bpy.data.objects.new("FoldedTravelRobe", mesh); bpy.context.collection.objects.link(robe)
+    for polygon in mesh.polygons: polygon.use_smooth = True
+
+    # Anatomical torso beneath the garments, with belt and asymmetric gear.
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=28, ring_count=14, radius=0.48, location=(0, 0.0, 1.62))
+    torso = bpy.context.active_object; torso.name = "WayfinderTorso"; torso.scale = (0.82, 0.55, 1.04); torso.data.materials.append(trim); bpy.ops.object.shade_smooth()
+    bpy.ops.mesh.primitive_torus_add(major_radius=0.34, minor_radius=0.045, major_segments=32, minor_segments=8, location=(0, 0, 1.38))
+    belt = bpy.context.active_object; belt.name = "LeatherBelt"; belt.scale.y = 0.76; belt.data.materials.append(leather)
+    beveled_cube("BeltBuckle", (0, -0.275, 1.38), (0.08, 0.035, 0.065), metal, 0.018)
+    beveled_cube("PotionPouch", (-0.37, 0.02, 1.28), (0.13, 0.10, 0.18), leather, 0.045)
+
+    # Draped back cloak: broad at the shoulders, split and folded at the hem.
+    cloak_verts, cloak_faces = [], []
+    across, down = 12, 9
+    for row in range(down):
+        t = row / (down - 1); z = 2.06 - t * 1.72
+        half_width = 0.48 + t * 0.20
+        for column in range(across):
+            u = column / (across - 1) * 2.0 - 1.0
+            x = u * half_width
+            y = 0.20 + t * 0.12 + math.cos(u * math.pi * 3.0) * 0.045 + math.sin(t * math.pi) * 0.10
+            z_fold = math.sin(u * math.pi * 4.0) * 0.035 * t
+            cloak_verts.append((x, y, z + z_fold))
+    for row in range(down - 1):
+        for column in range(across - 1):
+            a = row * across + column; b = a + 1; d = (row + 1) * across + column; c = d + 1
+            cloak_faces.append((a, b, c, d))
+    cloak_mesh = bpy.data.meshes.new("DrapedCloakMesh"); cloak_mesh.from_pydata(cloak_verts, [], cloak_faces); cloak_mesh.materials.append(cloth)
+    cloak_uv = cloak_mesh.uv_layers.new(name="CloakUV")
+    for polygon in cloak_mesh.polygons:
+        for loop_index in polygon.loop_indices:
+            vertex = cloak_mesh.loops[loop_index].vertex_index
+            cloak_uv.data[loop_index].uv = ((vertex % across) / (across - 1), (vertex // across) / (down - 1))
+    cloak = bpy.data.objects.new("DrapedWayfinderCloak", cloak_mesh); bpy.context.collection.objects.link(cloak)
+    solidify = cloak.modifiers.new("Cloak thickness", "SOLIDIFY"); solidify.thickness = 0.025
+    for polygon in cloak_mesh.polygons: polygon.use_smooth = True
+
+    # Shoulder mantle and layered collar break the torso/hood transition.
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=32, ring_count=12, radius=0.53, location=(0, 0.02, 1.95))
+    mantle = bpy.context.active_object; mantle.name = "LayeredShoulderMantle"; mantle.scale = (1.08, 0.66, 0.43); mantle.data.materials.append(cloth); bpy.ops.object.shade_smooth()
+    bpy.ops.mesh.primitive_torus_add(major_radius=0.29, minor_radius=0.055, major_segments=32, minor_segments=10, location=(0, -0.05, 2.03))
+    collar = bpy.context.active_object; collar.name = "RaisedCollar"; collar.scale.y = 0.78; collar.data.materials.append(trim)
+
+    # Articulated arms, forearms, leather bracers, and visible hands.
+    arm_specs = [
+        (Vector((-0.36, -0.01, 1.91)), Vector((-0.55, -0.20, 1.55)), Vector((-0.62, -0.31, 1.24))),
+        (Vector((0.36, -0.01, 1.91)), Vector((0.55, -0.22, 1.67)), Vector((0.67, -0.34, 1.47))),
+    ]
+    for index, (shoulder, elbow, wrist) in enumerate(arm_specs):
+        upper = add_cone_between(shoulder, elbow, 0.16, 0.13, sides=16); upper.name = f"UpperArm{index}"; upper.data.materials.append(cloth)
+        fore = add_cone_between(elbow, wrist, 0.13, 0.09, sides=16); fore.name = f"Forearm{index}"; fore.data.materials.append(cloth)
+        bracer = add_cone_between(elbow.lerp(wrist, 0.48), elbow.lerp(wrist, 0.88), 0.115, 0.095, sides=16); bracer.name = f"LeatherBracer{index}"; bracer.data.materials.append(leather)
+        bpy.ops.mesh.primitive_uv_sphere_add(segments=16, ring_count=8, radius=0.105, location=wrist)
+        hand = bpy.context.active_object; hand.name = f"Hand{index}"; hand.scale = (0.82, 0.72, 1.15); hand.data.materials.append(skin); bpy.ops.object.shade_smooth()
+
+    # Hood shell, thick oval rim, and deeply recessed face cavity.
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=40, ring_count=20, radius=0.43, location=(0, 0.02, 2.34))
+    hood = bpy.context.active_object; hood.name = "TailoredWayfinderHood"; hood.scale = (0.93, 0.86, 1.12); hood.data.materials.append(cloth); bpy.ops.object.shade_smooth()
+    bpy.ops.mesh.primitive_torus_add(major_radius=0.215, minor_radius=0.035, major_segments=36, minor_segments=10,
+                                    location=(0, -0.345, 2.33), rotation=(math.radians(90), 0, 0))
+    hood_rim = bpy.context.active_object; hood_rim.name = "HoodOpeningRim"; hood_rim.scale = (0.86, 1.0, 1.18); hood_rim.data.materials.append(trim)
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=28, ring_count=14, radius=0.185, location=(0, -0.365, 2.31))
+    hood_void = bpy.context.active_object; hood_void.name = "HoodShadow"; hood_void.scale = (0.82, 0.16, 1.06); hood_void.data.materials.append(face)
+    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2, radius=0.055, location=(0, -0.43, 1.98))
+    brooch = bpy.context.active_object; brooch.name = "VeilBrooch"; brooch.data.materials.append(rune)
+
+    # Staff with leather grip, metal ferrule, cage, and magical focus.
+    staff = add_cone_between(Vector((0.70, -0.38, 0.08)), Vector((0.70, -0.38, 2.92)), 0.055, 0.035, sides=14)
+    staff.name = "RunewoodStaff"; staff.data.materials.append(leather)
+    grip = add_cone_between(Vector((0.70, -0.38, 1.22)), Vector((0.70, -0.38, 1.72)), 0.073, 0.066, sides=16)
+    grip.name = "StaffGrip"; grip.data.materials.append(trim)
+    ferrule = add_cone_between(Vector((0.70, -0.38, 0.03)), Vector((0.70, -0.38, 0.28)), 0.072, 0.058, sides=14)
+    ferrule.name = "IronFerrule"; ferrule.data.materials.append(metal)
     staff.data.materials.append(leather)
-    bpy.ops.mesh.primitive_torus_add(major_radius=0.18, minor_radius=0.025, major_segments=24, minor_segments=8, location=(0.70, -0.38, 2.77), rotation=(math.radians(90), 0, 0))
+    bpy.ops.mesh.primitive_torus_add(major_radius=0.19, minor_radius=0.027, major_segments=32, minor_segments=10, location=(0.70, -0.38, 2.80), rotation=(math.radians(90), 0, 0))
     cage = bpy.context.active_object; cage.data.materials.append(metal)
-    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=3, radius=0.12, location=(0.70, -0.38, 2.77))
+    for angle in (0.0, math.pi / 2.0):
+        bpy.ops.mesh.primitive_torus_add(major_radius=0.16, minor_radius=0.016, major_segments=24, minor_segments=8,
+                                        location=(0.70, -0.38, 2.80), rotation=(math.radians(90), angle, 0))
+        bpy.context.active_object.data.materials.append(metal)
+    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=3, radius=0.125, location=(0.70, -0.38, 2.80))
     focus = bpy.context.active_object; focus.data.materials.append(rune); bpy.ops.object.shade_smooth()
     export_glb("detail_wayfinder.glb")
 

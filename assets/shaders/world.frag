@@ -70,6 +70,7 @@ void main() {
     float specularStrength = 0.02;
     float shininess = 64.0;
     float alpha = 1.0;
+    float foliageMask = 0.0;
 
     if (uMode == 1) {
         // Photoscan tiles cover ~2.4 m; a second, much broader scale breaks
@@ -78,7 +79,15 @@ void main() {
         vec3 soilNear = texture2D(uAlbedo, uv).rgb;
         vec3 soilFar = texture2D(uAlbedo, uv * 0.135).rgb;
         vec3 soil = pow(mix(soilNear, soilFar, 0.42), vec3(2.2));   // sRGB -> linear
-        vec3 rock = pow(mix(texture2D(uRock, vWorld.xz * 0.18).rgb, texture2D(uRock, vWorld.xz * 0.045).rgb, 0.4), vec3(2.2));
+        // Triplanar projection keeps cliff faces from stretching the rock
+        // photoscan vertically. A broad top-down sample breaks repetition.
+        vec3 projectionWeight = pow(abs(normal), vec3(4.0));
+        projectionWeight /= max(projectionWeight.x + projectionWeight.y + projectionWeight.z, 0.001);
+        vec3 rockX = texture2D(uRock, vWorld.zy * 0.18).rgb;
+        vec3 rockY = texture2D(uRock, vWorld.xz * 0.18).rgb;
+        vec3 rockZ = texture2D(uRock, vWorld.xy * 0.18).rgb;
+        vec3 rockDetail = rockX * projectionWeight.x + rockY * projectionWeight.y + rockZ * projectionWeight.z;
+        vec3 rock = pow(mix(rockDetail, texture2D(uRock, vWorld.xz * 0.045).rgb, 0.32), vec3(2.2));
         // Micro-relief: treat the albedo as a heightfield and perturb the
         // normal so raking light catches ground detail; fades with distance.
         float detailFade = exp(-length(vViewPosition) * 0.02);
@@ -90,7 +99,12 @@ void main() {
         }
         float slope = 1.0 - normal.y;
         float rockBlend = smoothstep(0.16, 0.40, slope);
-        vec3 ground = mix(soil * vTint.rgb, rock, rockBlend);
+        float patchNoise = valueNoise(vWorld.xz * 0.035 + vec2(8.2, -3.7));
+        float fineNoise = valueNoise(vWorld.xz * 0.19 - vec2(11.0, 4.0));
+        float moss = smoothstep(0.48, 0.78, patchNoise * 0.72 + fineNoise * 0.28) * (1.0 - rockBlend);
+        vec3 forestSoil = soil * vTint.rgb;
+        forestSoil = mix(forestSoil, forestSoil * vec3(0.62, 0.92, 0.52), moss * 0.34);
+        vec3 ground = mix(forestSoil, rock, rockBlend);
         float high = smoothstep(34.0, 54.0, vWorld.y);       // pale frost-dusted summits
         ground = mix(ground, rock * vec3(1.35, 1.42, 1.52), high * (1.0 - rockBlend * 0.35));
         float wet = smoothstep(-5.6, -7.6, vWorld.y);        // dark saturated shoreline
@@ -112,8 +126,12 @@ void main() {
     } else if (uMode == 3) {
         albedo = vTint.rgb;   // grass blades carry their albedo as vertex color
         specularStrength = 0.015;
+        foliageMask = 1.0;
     } else {
         albedo = pow(texture2D(uAlbedo, vUv).rgb, vec3(2.2)) * vTint.rgb;
+        // Green-dominant authored materials are foliage; bark, stone, cloth,
+        // and skin remain on the opaque surface path.
+        foliageMask = smoothstep(0.015, 0.09, albedo.g - max(albedo.r, albedo.b));
     }
 
     float shadow = 1.0;
@@ -136,6 +154,10 @@ void main() {
     vec3 skyBounce = uAmbient * 0.55 * max(normal.y, 0.0);
     vec3 directLight = uLightColor * diffuse;
     vec3 color = albedo * (uAmbient + skyBounce + directLight) + specular * uLightColor;
+    // Thin leaves and needles transmit light from behind. This keeps conifer
+    // boughs dimensional instead of collapsing into black cut-outs.
+    float transmission = max(dot(-normal, lightDirection), 0.0) * foliageMask;
+    color += albedo * uLightColor * transmission * (0.22 + 0.16 * max(normal.y, 0.0));
 
     if (uMode == 2) {
         // Fresnel-weighted reflection of the synthesized night sky, so the
@@ -155,10 +177,14 @@ void main() {
     }
 
     float distanceFromCamera = length(vViewPosition);
-    float density = 0.0019;
-    if (uMode == 1 || uMode == 3) density += 0.0012 * (1.0 - smoothstep(-8.0, 6.0, vWorld.y));  // mist pools in the basins
+    float density = 0.00165;
+    float basinHaze = exp(-max(vWorld.y - uEye.y + 9.0, 0.0) * 0.055);
+    if (uMode == 1 || uMode == 3) density += 0.00125 * basinHaze;
     float fog = 1.0 - exp(-distanceFromCamera * density);
-    color = mix(color, uFog, clamp(fog, 0.0, 0.94));
+    vec3 viewRay = normalize(vWorld - uEye);
+    float forwardScatter = pow(max(dot(viewRay, lightDirection), 0.0), 8.0);
+    vec3 aerialColor = uFog + uLightColor * forwardScatter * 0.10;
+    color = mix(color, aerialColor, clamp(fog, 0.0, 0.94));
 
     // Purkinje shift: scotopic vision drains warm hues from the darkest areas
     // — only after the sun is down.

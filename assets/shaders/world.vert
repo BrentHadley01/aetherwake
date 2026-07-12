@@ -14,7 +14,9 @@ void main() {
     vec4 vertex = gl_Vertex;
     if (uMode == 3) {
         // Grass sway: texcoord.x is the bend weight (0 at the root, 1 at the tip).
-        float sway = sin(uTime * 1.9 + vertex.x * 0.35 + vertex.z * 0.28) * 0.09 * gl_MultiTexCoord0.x;
+        float gust = sin(uTime * 0.43 + vertex.x * 0.055 - vertex.z * 0.038) * 0.5 + 0.5;
+        float sway = (sin(uTime * 1.9 + vertex.x * 0.35 + vertex.z * 0.28) * 0.065
+                    + sin(uTime * 3.7 + vertex.x * 0.17 - vertex.z * 0.22) * 0.025) * (0.55 + gust * 0.75) * gl_MultiTexCoord0.x;
         vertex.x += sway;
         vertex.z += sway * 0.6;
     }
