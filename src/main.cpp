@@ -123,6 +123,28 @@ struct SpellParticle {
     SpellVfxKind kind{};
 };
 
+GLuint buildSpellParticleTexture() {
+    constexpr int size = 64;
+    std::array<unsigned char, size * size * 4> pixels{};
+    for (int y = 0; y < size; ++y) for (int x = 0; x < size; ++x) {
+        const float nx = (static_cast<float>(x) + 0.5F) / size * 2.0F - 1.0F;
+        const float ny = (static_cast<float>(y) + 0.5F) / size * 2.0F - 1.0F;
+        const float radius = std::sqrt(nx * nx + ny * ny);
+        const float core = std::exp(-radius * radius * 7.5F);
+        const float halo = std::max(0.0F, 1.0F - radius) * 0.28F;
+        const float filament = 0.88F + 0.12F * std::sin(nx * 19.0F + ny * 13.0F);
+        const float alpha = std::clamp((core + halo) * filament, 0.0F, 1.0F);
+        const std::size_t index = static_cast<std::size_t>(y * size + x) * 4;
+        pixels[index] = pixels[index + 1] = pixels[index + 2] = 255;
+        pixels[index + 3] = static_cast<unsigned char>(alpha * 255.0F);
+    }
+    GLuint texture = 0; glGenTextures(1, &texture); glBindTexture(GL_TEXTURE_2D, texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, size, size, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    return texture;
+}
+
 float vfxNoise(int value) { return std::sin(static_cast<float>(value) * 78.233F) * 0.5F + 0.5F; }
 
 void spawnSpellVfx(std::vector<SpellParticle>& particles, int spellIndex, float x, float y, float z, float forwardX, float forwardZ) {
@@ -132,16 +154,16 @@ void spawnSpellVfx(std::vector<SpellParticle>& particles, int spellIndex, float 
     for (int i = 0; i < count; ++i) {
         const float a = static_cast<float>(i) * 2.39996F + vfxNoise(i + count) * 0.55F;
         const float radial = 0.12F + vfxNoise(i * 3 + count) * 0.85F;
-        SpellParticle p{}; p.kind = kind; p.age = 0.0F; p.size = 0.045F + vfxNoise(i * 11) * 0.10F;
+        SpellParticle p{}; p.kind = kind; p.age = 0.0F; p.size = 0.065F + vfxNoise(i * 11) * 0.13F;
         if (kind == SpellVfxKind::Ember) {
             p.x = x + forwardX * 0.7F + sideX * std::cos(a) * 0.18F; p.y = y + 1.48F + std::sin(a) * 0.16F; p.z = z + forwardZ * 0.7F + sideZ * std::cos(a) * 0.18F;
-            p.vx = forwardX * (12.0F + vfxNoise(i) * 8.0F) + sideX * std::sin(a) * 1.9F; p.vy = std::sin(a * 1.7F) * 1.4F + 0.5F; p.vz = forwardZ * (12.0F + vfxNoise(i) * 8.0F) + sideZ * std::sin(a) * 1.9F;
-            p.lifetime = 0.48F + vfxNoise(i * 9) * 0.42F;
+            p.vx = forwardX * (9.0F + vfxNoise(i) * 5.0F) + sideX * std::sin(a) * 1.9F; p.vy = std::sin(a * 1.7F) * 1.4F + 0.5F; p.vz = forwardZ * (9.0F + vfxNoise(i) * 5.0F) + sideZ * std::sin(a) * 1.9F;
+            p.size *= 1.35F; p.lifetime = 0.72F + vfxNoise(i * 9) * 0.48F;
         } else if (kind == SpellVfxKind::Tide) {
             p.x = x + std::cos(a) * radial * 1.2F; p.y = y + 0.20F + vfxNoise(i) * 0.55F; p.z = z + std::sin(a) * radial * 1.2F;
             p.vx = -std::sin(a) * (2.2F + radial); p.vy = 0.55F + vfxNoise(i * 2) * 1.1F; p.vz = std::cos(a) * (2.2F + radial); p.lifetime = 1.05F + vfxNoise(i * 7) * 0.65F;
         } else if (kind == SpellVfxKind::Stone) {
-            p.x = x + forwardX * 1.3F + std::cos(a) * radial; p.y = y + 0.08F; p.z = z + forwardZ * 1.3F + std::sin(a) * radial;
+            p.x = x + forwardX * 1.3F + std::cos(a) * radial; p.y = y + 0.30F; p.z = z + forwardZ * 1.3F + std::sin(a) * radial;
             p.vx = std::cos(a) * (0.8F + radial); p.vy = 3.8F + vfxNoise(i) * 4.8F; p.vz = std::sin(a) * (0.8F + radial); p.size *= 1.65F; p.lifetime = 0.75F + vfxNoise(i * 3) * 0.55F;
         } else {
             p.x = x + std::cos(a) * radial * 1.7F; p.y = y + 0.55F + vfxNoise(i) * 1.65F; p.z = z + std::sin(a) * radial * 1.7F;
@@ -161,23 +183,26 @@ void updateSpellVfx(std::vector<SpellParticle>& particles, float dt) {
     particles.erase(std::remove_if(particles.begin(), particles.end(), [](const SpellParticle& p) { return p.age >= p.lifetime; }), particles.end());
 }
 
-void drawSpellVfx(const std::vector<SpellParticle>& particles, float forwardX, float forwardZ) {
+void drawSpellVfx(const std::vector<SpellParticle>& particles, float forwardX, float forwardZ, GLuint particleTexture) {
     if (particles.empty()) return;
     const float rightX = -forwardZ, rightZ = forwardX;
-    glDisable(GL_TEXTURE_2D); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE); glDepthMask(GL_FALSE);
+    glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D, particleTexture); glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+    glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE); glDepthMask(GL_FALSE);
     glBegin(GL_QUADS);
     for (const SpellParticle& p : particles) {
         const float t = p.age / p.lifetime, fade = (1.0F - t) * (1.0F - t);
         float r = 0.3F, g = 0.8F, b = 1.0F;
         if (p.kind == SpellVfxKind::Ember) { r = 1.0F; g = 0.16F + 0.48F * (1.0F - t); b = 0.025F; }
-        else if (p.kind == SpellVfxKind::Stone) { r = 0.66F; g = 0.38F; b = 0.12F; }
+        else if (p.kind == SpellVfxKind::Stone) { r = 0.92F; g = 0.49F; b = 0.14F; }
         else if (p.kind == SpellVfxKind::Veil) { r = 0.22F + 0.30F * t; g = 0.82F; b = 0.92F; }
         const float s = p.size * (0.7F + fade * 1.4F);
         glColor4f(r, g, b, fade * 0.72F);
-        glVertex3f(p.x - rightX * s, p.y - s, p.z - rightZ * s); glVertex3f(p.x + rightX * s, p.y - s, p.z + rightZ * s);
-        glVertex3f(p.x + rightX * s, p.y + s, p.z + rightZ * s); glVertex3f(p.x - rightX * s, p.y + s, p.z - rightZ * s);
+        glTexCoord2f(0, 0); glVertex3f(p.x - rightX * s, p.y - s, p.z - rightZ * s);
+        glTexCoord2f(1, 0); glVertex3f(p.x + rightX * s, p.y - s, p.z + rightZ * s);
+        glTexCoord2f(1, 1); glVertex3f(p.x + rightX * s, p.y + s, p.z + rightZ * s);
+        glTexCoord2f(0, 1); glVertex3f(p.x - rightX * s, p.y + s, p.z - rightZ * s);
     }
-    glEnd(); glDepthMask(GL_TRUE); glDisable(GL_BLEND);
+    glEnd(); glDepthMask(GL_TRUE); glDisable(GL_BLEND); glDisable(GL_TEXTURE_2D);
 }
 
 // The sky is authored in display-space colors so fogged terrain (which passes
@@ -470,6 +495,7 @@ int main() {
     // CC0 photoscans from PolyHaven (forest_ground_04, mossy_rock).
     const GLuint soilTexture = renderer::loadTexture2D("assets/textures/forest_ground_diff.jpg");
     const GLuint rockTexture = renderer::loadTexture2D("assets/textures/mossy_rock_diff.jpg");
+    const GLuint spellParticleTexture = buildSpellParticleTexture();
     if (activeTexture && rockTexture) { activeTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, rockTexture); glEnable(GL_TEXTURE_2D); activeTexture(GL_TEXTURE0); }
 
     // Moonlight shadow map: depth-only FBO sampled with hardware PCF.
@@ -525,6 +551,7 @@ int main() {
     float heroX = 0.0F, heroZ = -26.0F, yaw = 0.0F;
     if (const char* spawn = std::getenv("AETHERWAKE_POS")) std::sscanf(spawn, "%f,%f,%f", &heroX, &heroZ, &yaw);
     const char* autoshot = std::getenv("AETHERWAKE_AUTOSHOT");
+    const char* autospell = std::getenv("AETHERWAKE_AUTOSPELL");
     const bool autoexit = std::getenv("AETHERWAKE_AUTOEXIT") != nullptr;
     bool running = true, won = false; Uint64 previous = SDL_GetTicks(); int frame = 0; float elapsed = 0.0F; Uint64 steadyStart = 0;
     // 0 = first person at the Wayfinder's eye; larger values form the
@@ -563,6 +590,10 @@ int main() {
         streamedWorld.resolveCollision(heroX, heroZ, 0.55F);
         const float heroY = std::max(world::WorldStreamer::heightAt(heroX, heroZ), world::WorldStreamer::waterLevel - 1.2F);
         streamedWorld.update(heroX, heroZ);
+        if (autospell && frame == 143) {
+            const int captureSpell = std::clamp(std::atoi(autospell) - 1, 0, 3);
+            spawnSpellVfx(spellParticles, captureSpell, heroX, heroY, heroZ, forwardX, forwardZ);
+        }
         updateSpellVfx(spellParticles, dt);
 
         // Procedural locomotion: walk bob and forward lean while moving,
@@ -723,7 +754,7 @@ int main() {
 
         // The particles are rendered after the world shader, but before the
         // post chain, so their additive cores naturally feed into bloom.
-        drawSpellVfx(spellParticles, forwardX, forwardZ);
+        drawSpellVfx(spellParticles, forwardX, forwardZ, spellParticleTexture);
 
         if (post.ready) {
             // Resolve the multisampled scene, run the quarter-res bloom chain,
