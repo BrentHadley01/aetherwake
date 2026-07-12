@@ -4,6 +4,7 @@ uniform sampler2D uAlbedo;
 uniform sampler2D uRock;
 uniform sampler2DShadow uShadow;
 uniform mat4 uLight;    // world -> shadow-map texture space
+uniform mat4 uInverseView;
 uniform int uShadowOn;
 uniform int uMode;      // 0 = authored mesh, 1 = streamed terrain, 2 = water, 3 = grass, 4 = sky
 uniform float uTime;
@@ -47,9 +48,11 @@ void main() {
         gl_FragColor = vec4(result, 1.0);
         return;
     }
-    vec3 normal = normalize(vNormal);
+    // Rotate the interpolated view-space normal back to world space so the
+    // fixed moon direction shades consistently regardless of camera yaw.
+    vec3 normal = normalize(mat3(uInverseView[0].xyz, uInverseView[1].xyz, uInverseView[2].xyz) * vNormal);
     vec3 lightDirection = normalize(vec3(-0.35, 0.72, 0.48));
-    vec3 viewDirection = normalize(-vViewPosition);
+    vec3 viewDirection = normalize(uEye - vWorld);
 
     vec3 albedo;
     float specularStrength = 0.02;

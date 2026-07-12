@@ -241,10 +241,11 @@ int main() {
     if (const char* spawn = std::getenv("AETHERWAKE_POS")) std::sscanf(spawn, "%f,%f,%f", &heroX, &heroZ, &yaw);
     const char* autoshot = std::getenv("AETHERWAKE_AUTOSHOT");
     const bool autoexit = std::getenv("AETHERWAKE_AUTOEXIT") != nullptr;
-    bool running = true, won = false; Uint64 previous = SDL_GetTicks(); int frame = 0; float elapsed = 0.0F;
+    bool running = true, won = false; Uint64 previous = SDL_GetTicks(); int frame = 0; float elapsed = 0.0F; Uint64 steadyStart = 0;
 
     while (running) {
         const Uint64 now = SDL_GetTicks(); const float dt = std::min(0.05F, static_cast<float>(now - previous) / 1000.0F); previous = now; elapsed += dt; ++frame;
+        if (frame == 100) steadyStart = now;   // streaming burst is over; measure real frame rate from here
         SDL_Event event; while (SDL_PollEvent(&event)) { if (event.type == SDL_EVENT_QUIT) running = false; if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) { if (event.key.key == SDLK_ESCAPE) running = false; if (event.key.key >= SDLK_1 && event.key.key <= SDLK_4) selected = static_cast<int>(event.key.key - SDLK_1); if (event.key.key == SDLK_SPACE && !won) { const auto cast = magic.cast(player, &warden, &heart, spells[selected]); won = cast.accepted && warden.health == 0; } } }
 
         const bool* keys = SDL_GetKeyboardState(nullptr);
@@ -262,9 +263,11 @@ int main() {
         streamedWorld.update(heroX, heroZ);
 
         // Depth-only moonlight pass into the shadow FBO, before the main view.
-        float lightMatrix[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-        bool shadowActive = false;
-        if (shadowReady && worldShader.valid()) {
+        // The light and world are static, so refreshing every other frame
+        // halves the geometry submitted with no visible lag.
+        static float lightMatrix[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        static bool shadowActive = false;
+        if (shadowReady && worldShader.valid() && (frame % 2 == 1 || !shadowActive)) {
             const float dirLength = std::sqrt(0.35F * 0.35F + 0.72F * 0.72F + 0.48F * 0.48F);
             const float dirX = -0.35F / dirLength, dirY = 0.72F / dirLength, dirZ = 0.48F / dirLength;
             const float snap = 420.0F / shadowSize * 2.0F;   // texel-align to stop shadow swimming
@@ -371,5 +374,8 @@ int main() {
         if (autoshot && frame == 150) { saveScreenshot(autoshot, width, height); if (autoexit) running = false; }
         SDL_GL_SwapWindow(window);
     }
+    const float seconds = static_cast<float>(SDL_GetTicks()) / 1000.0F;
+    if (seconds > 0.5F) std::printf("[aetherwake] %d frames in %.1fs (%.0f fps avg, %.0f fps steady)\n", frame, seconds, frame / seconds,
+                                    frame > 100 && SDL_GetTicks() > steadyStart ? (frame - 100) * 1000.0F / (SDL_GetTicks() - steadyStart) : 0.0F);
     SDL_GL_DestroyContext(context); SDL_DestroyWindow(window); SDL_Quit(); return 0;
 }
