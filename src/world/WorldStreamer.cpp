@@ -406,9 +406,9 @@ void WorldStreamer::drawDetails(const unsigned int* lists, int listCount, float 
             // The authored LOD now mirrors the three-arm crown and continuous
             // bough silhouette, so switching at 32 m removes sub-pixel work
             // without collapsing the forest canopy.
-            const float lodDistance = shadowPass ? 24.0F : 52.0F;
-            const float farLodDistance = shadowPass ? 45.0F : 90.0F;
-            const float impostorDistance = shadowPass ? 88.0F : 195.0F;
+            const float lodDistance = shadowPass ? 32.0F : 84.0F;
+            const float farLodDistance = shadowPass ? 78.0F : 170.0F;
+            const float impostorDistance = shadowPass ? 145.0F : 300.0F;
             if (instance.type <= 1 && listCount >= 31 && distanceSquared > impostorDistance * impostorDistance) resolvedType = 29 + instance.type;
             else if (instance.type <= 1 && listCount >= 29 && distanceSquared > farLodDistance * farLodDistance) resolvedType = 27 + instance.type;
             else if (instance.type <= 1 && listCount >= 14 && distanceSquared > lodDistance * lodDistance) resolvedType += 12;
