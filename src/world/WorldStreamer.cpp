@@ -66,9 +66,10 @@ void emitVertex(float x, float z, float step) {
     const float ny = 2.0F * step;
     const float length = std::sqrt(nx * nx + ny * ny + nz * nz);
     glNormal3f(nx / length, ny / length, nz / length);
-    // Moisture-driven ground tint: lush green in wet basins, dry olive on exposed ground.
+    // Moisture-driven ground tint: mossy green only in wet basins, warm
+    // leaf-litter loam on exposed ground so the floor reads forest, not lawn.
     const float moisture = fbm(x * 0.013F + 5.0F, z * 0.013F + 5.0F, 3);
-    glColor3f(0.38F + 0.22F * (1.0F - moisture), 0.55F + 0.30F * moisture, 0.30F + 0.08F * moisture);
+    glColor3f(0.44F + 0.16F * (1.0F - moisture), 0.40F + 0.24F * moisture, 0.28F + 0.06F * moisture);
     glVertex3f(x, y, z);
 }
 }

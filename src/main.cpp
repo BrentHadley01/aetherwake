@@ -167,8 +167,14 @@ int main() {
     using namespace aetherwake;
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) return 1;
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1); SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1); SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
     SDL_Window* window = SDL_CreateWindow("Aetherwake — The Veiled Reach", 1280, 720, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
     SDL_GLContext context = window ? SDL_GL_CreateContext(window) : nullptr;
+    if (!context && window) {
+        // Fall back to a non-multisampled context on GPUs that refuse MSAA.
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0); SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
+        context = SDL_GL_CreateContext(window);
+    }
     if (!context) { SDL_DestroyWindow(window); SDL_Quit(); return 1; }
     SDL_GL_SetSwapInterval(1);
     activeTexture = reinterpret_cast<ActiveTextureFn>(SDL_GL_GetProcAddress("glActiveTexture"));
@@ -177,6 +183,10 @@ int main() {
     framebufferTexture2D = reinterpret_cast<FramebufferTexture2DFn>(SDL_GL_GetProcAddress("glFramebufferTexture2D"));
     checkFramebufferStatus = reinterpret_cast<CheckFramebufferStatusFn>(SDL_GL_GetProcAddress("glCheckFramebufferStatus"));
     glEnable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE); glShadeModel(GL_SMOOTH);
+#ifndef GL_MULTISAMPLE
+#define GL_MULTISAMPLE 0x809D
+#endif
+    glEnable(GL_MULTISAMPLE);
 
     renderer::GltfPreview environment; environment.load("assets/models/veiled_reach-realistic.glb");
     renderer::ShaderProgram worldShader; worldShader.load("assets/shaders/world.vert", "assets/shaders/world.frag");

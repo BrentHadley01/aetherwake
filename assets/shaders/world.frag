@@ -80,10 +80,14 @@ void main() {
         albedo = mix(ground, ground * vec3(0.40, 0.39, 0.35), wet);
         specularStrength = 0.03 + 0.25 * wet;
     } else if (uMode == 2) {
-        float w1 = sin(vWorld.x * 0.9 + uTime * 1.3) + sin(vWorld.z * 0.7 - uTime * 1.1);
-        float w2 = sin((vWorld.x + vWorld.z) * 0.23 + uTime * 0.6);
+        // Noise-perturbed phases keep the ripples from forming periodic
+        // contour bands at glancing angles.
+        float phase = valueNoise(vWorld.xz * 0.11) * 5.5;
+        float w1 = sin(vWorld.x * 0.9 + phase + uTime * 1.3) + sin(vWorld.z * 0.7 - phase * 0.7 - uTime * 1.1);
+        float w2 = sin((vWorld.x + vWorld.z) * 0.23 + phase + uTime * 0.6);
+        float w3 = valueNoise(vWorld.xz * 0.35 + vec2(uTime * 0.05, -uTime * 0.04)) - 0.5;
         float rippleFade = exp(-length(vViewPosition) * 0.012);   // avoid distant moire
-        normal = normalize(vec3((w1 * 0.035 + w2 * 0.05) * rippleFade, 1.0, (w1 * 0.04 - w2 * 0.045) * rippleFade));
+        normal = normalize(vec3((w1 * 0.03 + w2 * 0.04 + w3 * 0.10) * rippleFade, 1.0, (w1 * 0.035 - w2 * 0.04 + w3 * 0.09) * rippleFade));
         albedo = vec3(0.006, 0.026, 0.034);
         specularStrength = 0.9;
         shininess = 130.0;
@@ -118,9 +122,20 @@ void main() {
     vec3 color = albedo * (coolAmbient + skyBounce + moonLight) + specular * vec3(0.72, 0.9, 1.0);
 
     if (uMode == 2) {
-        float rim = pow(1.0 - max(dot(viewDirection, normal), 0.0), 3.0);
-        color += rim * vec3(0.05, 0.10, 0.13);
-        alpha = mix(alpha, 0.97, rim);
+        // Fresnel-weighted reflection of the synthesized night sky, so the
+        // lake mirrors the gradient, drifting clouds, and a moon glint.
+        vec3 incident = normalize(vWorld - uEye);
+        vec3 reflected = reflect(incident, normal);
+        reflected.y = max(abs(reflected.y), 0.02);
+        float skyT = pow(clamp(reflected.y, 0.0, 1.0), 0.62);
+        vec3 skyReflection = mix(vec3(0.050, 0.080, 0.105), vec3(0.007, 0.015, 0.030), skyT);
+        vec2 reflectionUv = reflected.xz / reflected.y * 0.42 + vec2(uTime * 0.006, uTime * 0.0015);
+        float cloud = smoothstep(0.51, 0.72, cloudFbm(reflectionUv) * 0.74 + cloudFbm(reflectionUv * 2.15 + vec2(19.0, -7.0)) * 0.26);
+        skyReflection = mix(skyReflection, vec3(0.020, 0.026, 0.034), cloud * 0.85);
+        float fresnel = 0.15 + 0.85 * pow(1.0 - max(dot(-incident, normal), 0.0), 3.0);
+        color = mix(color, skyReflection, fresnel);
+        color += pow(max(dot(reflected, lightDirection), 0.0), 240.0) * vec3(0.55, 0.68, 0.80) * shadow;
+        alpha = mix(0.88, 0.985, fresnel);
     }
 
     float distanceFromCamera = length(vViewPosition);
@@ -129,7 +144,14 @@ void main() {
     float fog = 1.0 - exp(-distanceFromCamera * density);
     color = mix(color, vec3(0.016, 0.030, 0.045), clamp(fog, 0.0, 0.94));
 
+    // Purkinje shift: scotopic vision drains warm hues from the darkest areas.
+    float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
+    float nightBlend = 1.0 - smoothstep(0.0, 0.14, luminance);
+    color = mix(color, luminance * vec3(0.72, 0.86, 1.18), nightBlend * 0.35);
+
     color = vec3(1.0) - exp(-color * 3.2);
     color = pow(color, vec3(1.0 / 2.2));
+    // Gentle filmic S-curve for contrast without crushing the fog bands.
+    color = mix(color, color * color * (3.0 - 2.0 * color), 0.22);
     gl_FragColor = vec4(color, alpha);
 }
