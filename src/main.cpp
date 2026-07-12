@@ -242,6 +242,108 @@ bool createPostTargets(PostTargets& post, int width, int height) {
     return post.ready;
 }
 
+float smoothstepf(float edge0, float edge1, float x) {
+    x = std::clamp((x - edge0) / (edge1 - edge0), 0.0F, 1.0F);
+    return x * x * (3.0F - 2.0F * x);
+}
+
+// Everything the day/night cycle feeds into shaders and sky rendering.
+struct CycleState {
+    float lightDir[3], lightColor[3], ambient[3], fogLinear[3], zenithLinear[3];
+    float horizonDisplay[3], zenithDisplay[3], cloudDark[3], cloudLit[3];
+    float sunDir[3];
+    float night{}, sunHeight{};
+};
+
+// Matches the shader's tone map so sky colors authored in linear space land
+// on the same display values as fogged geometry.
+float toDisplay(float linear) { return std::pow(1.0F - std::exp(-linear * 3.2F), 1.0F / 2.2F); }
+
+CycleState computeCycle(float dayTime) {
+    CycleState cycle{};
+    const float phi = dayTime * 6.2831853F - 1.5707963F;
+    float sunX = 0.35F, sunY = std::sin(phi), sunZ = std::cos(phi) * 0.75F;
+    const float sunLength = std::sqrt(sunX * sunX + sunY * sunY + sunZ * sunZ);
+    sunX /= sunLength; sunY /= sunLength; sunZ /= sunLength;
+    cycle.sunDir[0] = sunX; cycle.sunDir[1] = sunY; cycle.sunDir[2] = sunZ;
+    cycle.sunHeight = sunY;
+    const bool daylight = sunY > 0.0F;
+    cycle.lightDir[0] = daylight ? sunX : -sunX; cycle.lightDir[1] = daylight ? sunY : -sunY; cycle.lightDir[2] = daylight ? sunZ : -sunZ;
+    const float dayF = smoothstepf(0.04F, 0.30F, sunY);
+    const float duskWarmth = daylight ? smoothstepf(0.0F, 0.05F, sunY) * (1.0F - smoothstepf(0.08F, 0.30F, sunY)) : 0.0F;
+    cycle.night = smoothstepf(0.06F, -0.04F, sunY);
+    const auto blend = [&](float* out, const float night[3], const float day[3]) {
+        for (int i = 0; i < 3; ++i) out[i] = night[i] + (day[i] - night[i]) * dayF;
+    };
+    if (daylight) {
+        const float horizonSun[3] = {1.25F, 0.62F, 0.32F}, noonSun[3] = {1.30F, 1.22F, 1.05F};
+        const float lift = smoothstepf(0.0F, 0.05F, sunY), warm = smoothstepf(0.04F, 0.32F, sunY);
+        for (int i = 0; i < 3; ++i) cycle.lightColor[i] = (horizonSun[i] + (noonSun[i] - horizonSun[i]) * warm) * lift;
+    } else {
+        const float moon[3] = {0.62F, 0.80F, 0.95F};
+        const float lift = smoothstepf(0.0F, 0.07F, -sunY) * 0.95F;
+        for (int i = 0; i < 3; ++i) cycle.lightColor[i] = moon[i] * lift;
+    }
+    const float ambientNight[3] = {0.022F, 0.032F, 0.048F}, ambientDay[3] = {0.16F, 0.20F, 0.27F};
+    const float fogNight[3] = {0.016F, 0.030F, 0.045F}, fogDay[3] = {0.26F, 0.34F, 0.44F};
+    const float zenithNight[3] = {0.004F, 0.010F, 0.022F}, zenithDay[3] = {0.07F, 0.16F, 0.36F};
+    const float cloudDarkNight[3] = {0.115F, 0.14F, 0.175F}, cloudDarkDay[3] = {0.50F, 0.55F, 0.63F};
+    const float cloudLitNight[3] = {0.20F, 0.225F, 0.26F}, cloudLitDay[3] = {0.82F, 0.85F, 0.90F};
+    blend(cycle.ambient, ambientNight, ambientDay);
+    blend(cycle.fogLinear, fogNight, fogDay);
+    blend(cycle.zenithLinear, zenithNight, zenithDay);
+    blend(cycle.cloudDark, cloudDarkNight, cloudDarkDay);
+    blend(cycle.cloudLit, cloudLitNight, cloudLitDay);
+    const float warmFog[3] = {0.10F, 0.02F, -0.01F}, warmCloud[3] = {0.22F, 0.03F, -0.05F};
+    for (int i = 0; i < 3; ++i) {
+        cycle.fogLinear[i] = std::max(0.0F, cycle.fogLinear[i] + warmFog[i] * duskWarmth);
+        cycle.cloudDark[i] = std::max(0.0F, cycle.cloudDark[i] + warmCloud[i] * duskWarmth * 0.7F);
+        cycle.cloudLit[i] = std::max(0.0F, cycle.cloudLit[i] + warmCloud[i] * duskWarmth);
+    }
+    for (int i = 0; i < 3; ++i) {
+        cycle.horizonDisplay[i] = toDisplay(cycle.fogLinear[i]);
+        cycle.zenithDisplay[i] = toDisplay(cycle.zenithLinear[i]);
+    }
+    return cycle;
+}
+
+// Rotates the current matrix so geometry baked toward the reference moon
+// direction points along the requested direction instead.
+void rotateFromBakedDirection(float targetX, float targetY, float targetZ) {
+    const float bakedLength = std::sqrt(0.35F * 0.35F + 0.72F * 0.72F + 0.48F * 0.48F);
+    const float bakedX = -0.35F / bakedLength, bakedY = 0.72F / bakedLength, bakedZ = 0.48F / bakedLength;
+    const float dot = std::clamp(bakedX * targetX + bakedY * targetY + bakedZ * targetZ, -1.0F, 1.0F);
+    float axisX = bakedY * targetZ - bakedZ * targetY, axisY = bakedZ * targetX - bakedX * targetZ, axisZ = bakedX * targetY - bakedY * targetX;
+    const float axisLength = std::sqrt(axisX * axisX + axisY * axisY + axisZ * axisZ);
+    if (axisLength < 1.0e-5F) { if (dot < 0.0F) glRotatef(180.0F, 0.0F, 1.0F, 0.0F); return; }
+    glRotatef(std::acos(dot) * 57.29578F, axisX / axisLength, axisY / axisLength, axisZ / axisLength);
+}
+
+GLuint buildSunList() {
+    const GLuint list = glGenLists(1);
+    glNewList(list, GL_COMPILE);
+    const float ml = std::sqrt(0.35F * 0.35F + 0.72F * 0.72F + 0.48F * 0.48F);
+    const float cx = -0.35F / ml * 1300.0F, cy = 0.72F / ml * 1300.0F, cz = 0.48F / ml * 1300.0F;
+    float ax = -0.48F / ml, ay = 0.0F, az = -0.35F / ml; const float al = std::sqrt(ax * ax + az * az); ax /= al; az /= al;
+    const float mx = -0.35F / ml, my = 0.72F / ml, mz = 0.48F / ml;
+    const float bx = ay * mz - az * my, by = az * mx - ax * mz, bz = ax * my - ay * mx;
+    glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    for (const auto& [discRadius, alpha] : {std::pair{58.0F, 0.98F}, std::pair{170.0F, 0.14F}}) {
+        glBegin(GL_TRIANGLE_FAN);
+        glColor4f(1.0F, 0.86F, 0.62F, alpha); glVertex3f(cx, cy, cz);
+        glColor4f(1.0F, 0.72F, 0.42F, 0.0F);
+        for (int i = 0; i <= 24; ++i) {
+            const float angle = static_cast<float>(i) / 24.0F * 6.2831853F;
+            if (alpha > 0.5F) glColor4f(1.0F, 0.86F, 0.62F, alpha);
+            glVertex3f(cx + (ax * std::cos(angle) + bx * std::sin(angle)) * discRadius, cy + (ay * std::cos(angle) + by * std::sin(angle)) * discRadius, cz + (az * std::cos(angle) + bz * std::sin(angle)) * discRadius);
+        }
+        glEnd();
+    }
+    glDisable(GL_BLEND);
+    glEndList();
+    return list;
+}
+
 void drawFullscreenQuad() {
     glBegin(GL_QUADS);
     glTexCoord2f(0.0F, 0.0F); glVertex2f(-1.0F, -1.0F);
@@ -329,6 +431,7 @@ int main() {
     std::printf("[aetherwake] shader: %s | soil tex %u | rock tex %u | shadow map %s | post chain %s\n", worldShader.status().c_str(), soilTexture, rockTexture, shadowReady ? "ready" : "unavailable", postCapable ? "ready" : "unavailable");
     const GLuint skyDomeList = buildSkyDomeList();
     const GLuint celestialList = buildCelestialList();
+    const GLuint sunList = buildSunList();
 
     // Blender-authored environment details, compiled once into display lists and
     // instanced across the streamed terrain by the world streamer.
@@ -372,17 +475,40 @@ int main() {
         if (keys[SDL_SCANCODE_Q] || keys[SDL_SCANCODE_LEFT]) yaw += 80.0F * dt;
         if (keys[SDL_SCANCODE_E] || keys[SDL_SCANCODE_RIGHT]) yaw -= 80.0F * dt;
         heroX = std::clamp(heroX, -4000.0F, 4000.0F); heroZ = std::clamp(heroZ, -4000.0F, 4000.0F);
+        streamedWorld.resolveCollision(heroX, heroZ, 0.55F);
         const float heroY = std::max(world::WorldStreamer::heightAt(heroX, heroZ), world::WorldStreamer::waterLevel - 1.2F);
         streamedWorld.update(heroX, heroZ);
 
-        // Depth-only moonlight pass into the shadow FBO, before the main view.
-        // The light and world are static, so refreshing every other frame
-        // halves the geometry submitted with no visible lag.
+        // Procedural locomotion: walk bob and forward lean while moving,
+        // a slow breathing bob at rest, all smoothed to avoid pops.
+        const bool moving = keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_A] || keys[SDL_SCANCODE_D];
+        const bool sprinting = moving && (keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT]);
+        static float animPhase = 0.0F, bobAmount = 0.0F, lean = 0.0F;
+        animPhase += (sprinting ? 3.4F : moving ? 2.3F : 1.0F) * 6.2831853F * dt;
+        const float targetBob = sprinting ? 0.15F : moving ? 0.10F : 0.03F;
+        const float targetLean = sprinting ? 8.0F : moving ? 4.5F : 0.0F;
+        bobAmount += (targetBob - bobAmount) * std::min(1.0F, dt * 6.0F);
+        lean += (targetLean - lean) * std::min(1.0F, dt * 6.0F);
+        const float bob = std::abs(std::sin(animPhase)) * bobAmount;
+
+        // Day/night cycle: a full day every 12 minutes; hold T to fast-forward,
+        // or freeze at a specific time with AETHERWAKE_TIME=0..1 (0 = midnight).
+        static float dayTime = -1.0F; static bool dayTimeFixed = false;
+        if (dayTime < 0.0F) {
+            const char* spec = std::getenv("AETHERWAKE_TIME");
+            if (spec) { dayTime = std::clamp(static_cast<float>(std::atof(spec)), 0.0F, 1.0F); dayTimeFixed = true; }
+            else dayTime = 0.0F;
+        }
+        if (!dayTimeFixed) { dayTime += dt / 720.0F + (keys[SDL_SCANCODE_T] ? dt / 18.0F : 0.0F); dayTime -= std::floor(dayTime); }
+        const CycleState cycle = computeCycle(dayTime);
+
+        // Depth-only sun/moon pass into the shadow FBO, before the main view.
+        // Refreshing every other frame halves the geometry submitted with no
+        // visible lag (the light direction moves very slowly).
         static float lightMatrix[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         static bool shadowActive = false;
         if (shadowReady && worldShader.valid() && (frame % 2 == 1 || !shadowActive)) {
-            const float dirLength = std::sqrt(0.35F * 0.35F + 0.72F * 0.72F + 0.48F * 0.48F);
-            const float dirX = -0.35F / dirLength, dirY = 0.72F / dirLength, dirZ = 0.48F / dirLength;
+            const float dirX = cycle.lightDir[0], dirY = std::max(cycle.lightDir[1], 0.10F), dirZ = cycle.lightDir[2];
             const float snap = 420.0F / shadowSize * 2.0F;   // texel-align to stop shadow swimming
             const float focusX = std::floor(heroX / snap) * snap, focusZ = std::floor(heroZ / snap) * snap;
             const float focusY = world::WorldStreamer::heightAt(focusX, focusZ);
@@ -401,7 +527,7 @@ int main() {
             streamedWorld.drawDetails(detailLists.data(), static_cast<int>(detailLists.size()), heroX, heroZ, 0.0F, 180.0F);
             environment.draw();
             if (wayfinderList) {
-                glPushMatrix(); glTranslatef(heroX, heroY, heroZ); glRotatef(180.0F - yaw, 0.0F, 1.0F, 0.0F); glCallList(wayfinderList); glPopMatrix();
+                glPushMatrix(); glTranslatef(heroX, heroY + bob, heroZ); glRotatef(180.0F - yaw, 0.0F, 1.0F, 0.0F); glRotatef(lean, 1.0F, 0.0F, 0.0F); glCallList(wayfinderList); glPopMatrix();
             }
             glDisable(GL_POLYGON_OFFSET_FILL);
             glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -417,7 +543,7 @@ int main() {
         int width, height; SDL_GetWindowSizeInPixels(window, &width, &height); glViewport(0, 0, width, height);
         if (postCapable && (post.width != width || post.height != height)) { destroyPostTargets(post); createPostTargets(post, width, height); }
         if (post.ready) bindFramebuffer(GL_FRAMEBUFFER, post.sceneFbo);
-        glClearColor(0.26F, 0.34F, 0.40F, 1.0F); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glClearColor(cycle.horizonDisplay[0], cycle.horizonDisplay[1], cycle.horizonDisplay[2], 1.0F); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glMatrixMode(GL_PROJECTION); glLoadIdentity(); perspective(56.0F, static_cast<float>(width) / height, 0.2F, 3000.0F); glMatrixMode(GL_MODELVIEW); glLoadIdentity();
 
         const float orbit = 20.0F;
@@ -443,6 +569,17 @@ int main() {
         glPushMatrix(); glTranslatef(eyeX, eyeY, eyeZ);
         if (worldShader.valid()) {
             worldShader.use();
+            // Cycle uniforms persist in program state for the world pass below.
+            worldShader.setVec3("uLightDir", cycle.lightDir[0], cycle.lightDir[1], cycle.lightDir[2]);
+            worldShader.setVec3("uLightColor", cycle.lightColor[0], cycle.lightColor[1], cycle.lightColor[2]);
+            worldShader.setVec3("uAmbient", cycle.ambient[0], cycle.ambient[1], cycle.ambient[2]);
+            worldShader.setVec3("uFog", cycle.fogLinear[0], cycle.fogLinear[1], cycle.fogLinear[2]);
+            worldShader.setVec3("uZenithLin", cycle.zenithLinear[0], cycle.zenithLinear[1], cycle.zenithLinear[2]);
+            worldShader.setVec3("uHorizonDisp", cycle.horizonDisplay[0], cycle.horizonDisplay[1], cycle.horizonDisplay[2]);
+            worldShader.setVec3("uZenithDisp", cycle.zenithDisplay[0], cycle.zenithDisplay[1], cycle.zenithDisplay[2]);
+            worldShader.setVec3("uCloudDark", cycle.cloudDark[0], cycle.cloudDark[1], cycle.cloudDark[2]);
+            worldShader.setVec3("uCloudLit", cycle.cloudLit[0], cycle.cloudLit[1], cycle.cloudLit[2]);
+            worldShader.setFloat("uNight", cycle.night);
             worldShader.setInt("uMode", 4);
             worldShader.setFloat("uTime", elapsed);
             worldShader.setVec3("uEye", eyeX, eyeY, eyeZ);
@@ -452,7 +589,13 @@ int main() {
             worldShader.stop();
         } else glCallList(skyDomeList);
         glDisable(GL_TEXTURE_2D);
-        glCallList(celestialList);
+        if (cycle.sunHeight < 0.02F) {
+            // Stars and moon track the night side of the celestial arc.
+            glPushMatrix(); rotateFromBakedDirection(-cycle.sunDir[0], -cycle.sunDir[1], -cycle.sunDir[2]); glCallList(celestialList); glPopMatrix();
+        }
+        if (cycle.sunHeight > -0.06F) {
+            glPushMatrix(); rotateFromBakedDirection(cycle.sunDir[0], cycle.sunDir[1], cycle.sunDir[2]); glCallList(sunList); glPopMatrix();
+        }
         glPopMatrix();
         glEnable(GL_DEPTH_TEST); glDepthMask(GL_TRUE);
 
@@ -471,7 +614,7 @@ int main() {
             streamedWorld.drawDetails(detailLists.data(), static_cast<int>(detailLists.size()), eyeX, eyeZ, 8.0F, 420.0F, forwardX, forwardZ);
             environment.draw();
             if (wayfinderList) {
-                glPushMatrix(); glTranslatef(heroX, heroY, heroZ); glRotatef(180.0F - yaw, 0.0F, 1.0F, 0.0F); glCallList(wayfinderList); glPopMatrix();
+                glPushMatrix(); glTranslatef(heroX, heroY + bob, heroZ); glRotatef(180.0F - yaw, 0.0F, 1.0F, 0.0F); glRotatef(lean, 1.0F, 0.0F, 0.0F); glCallList(wayfinderList); glPopMatrix();
             }
             // Water last: a camera-following sheet blended over the flooded basins.
             worldShader.setInt("uMode", 2);

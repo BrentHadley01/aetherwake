@@ -9,6 +9,17 @@ uniform int uShadowOn;
 uniform int uMode;      // 0 = authored mesh, 1 = streamed terrain, 2 = water, 3 = grass, 4 = sky
 uniform float uTime;
 uniform vec3 uEye;
+// Day/night cycle state, computed on the CPU each frame.
+uniform vec3 uLightDir;
+uniform vec3 uLightColor;
+uniform vec3 uAmbient;
+uniform vec3 uFog;          // linear-space fog / horizon color
+uniform vec3 uZenithLin;    // linear-space zenith color (water reflections)
+uniform vec3 uHorizonDisp;  // display-space sky gradient endpoints
+uniform vec3 uZenithDisp;
+uniform vec3 uCloudDark;
+uniform vec3 uCloudLit;
+uniform float uNight;       // 1 = full night (drives the Purkinje shift)
 
 varying vec3 vNormal;
 varying vec3 vViewPosition;
@@ -30,28 +41,29 @@ float cloudFbm(vec2 p) {
 
 void main() {
     if (uMode == 4) {
-        // Sky dome: authored gradient in vTint plus drifting moonlit clouds.
+        // Sky dome: cycle-driven gradient plus drifting lit clouds.
         vec3 direction = normalize(vWorld - uEye);
-        vec3 result = vTint.rgb;
+        float upness = clamp(direction.y * 1.05 + 0.10, 0.0, 1.0);
+        vec3 result = mix(uHorizonDisp, uZenithDisp, pow(upness, 0.62));
         if (direction.y > 0.02) {
             vec2 cloudUv = direction.xz / max(direction.y, 0.10) * 0.42 + vec2(uTime * 0.006, uTime * 0.0015);
             float broadCloud = cloudFbm(cloudUv);
             float wisps = cloudFbm(cloudUv * 2.15 + vec2(19.0, -7.0));
             float cloud = smoothstep(0.51, 0.72, broadCloud * 0.74 + wisps * 0.26);
             float horizonFade = smoothstep(0.03, 0.2, direction.y);
-            float moonGlow = pow(max(dot(direction, normalize(vec3(-0.35, 0.72, 0.48))), 0.0), 16.0);
-            vec3 cloudColor = mix(vec3(0.12, 0.145, 0.18), vec3(0.20, 0.225, 0.26), wisps);
-            cloudColor += moonGlow * vec3(0.28, 0.31, 0.36);
+            float glow = pow(max(dot(direction, normalize(uLightDir)), 0.0), 16.0);
+            vec3 cloudColor = mix(uCloudDark, uCloudLit, wisps);
+            cloudColor += glow * uLightColor * 0.35;
             result = mix(result, cloudColor, cloud * horizonFade * 0.68);
-            result += moonGlow * 0.05 * (1.0 - cloud);
+            result += glow * uLightColor * 0.06 * (1.0 - cloud);
         }
         gl_FragColor = vec4(result, 1.0);
         return;
     }
     // Rotate the interpolated view-space normal back to world space so the
-    // fixed moon direction shades consistently regardless of camera yaw.
+    // cycle light direction shades consistently regardless of camera yaw.
     vec3 normal = normalize(mat3(uInverseView[0].xyz, uInverseView[1].xyz, uInverseView[2].xyz) * vNormal);
-    vec3 lightDirection = normalize(vec3(-0.35, 0.72, 0.48));
+    vec3 lightDirection = normalize(uLightDir);
     vec3 viewDirection = normalize(uEye - vWorld);
 
     vec3 albedo;
@@ -119,10 +131,9 @@ void main() {
     vec3 halfVector = normalize(lightDirection + viewDirection);
     float diffuse = max(dot(normal, lightDirection), 0.0) * shadow;
     float specular = pow(max(dot(normal, halfVector), 0.0), shininess) * specularStrength * shadow;
-    vec3 coolAmbient = vec3(0.022, 0.032, 0.048);
-    vec3 skyBounce = vec3(0.012, 0.022, 0.034) * max(normal.y, 0.0);
-    vec3 moonLight = vec3(0.62, 0.80, 0.95) * diffuse;
-    vec3 color = albedo * (coolAmbient + skyBounce + moonLight) + specular * vec3(0.72, 0.9, 1.0);
+    vec3 skyBounce = uAmbient * 0.55 * max(normal.y, 0.0);
+    vec3 directLight = uLightColor * diffuse;
+    vec3 color = albedo * (uAmbient + skyBounce + directLight) + specular * uLightColor;
 
     if (uMode == 2) {
         // Fresnel-weighted reflection of the synthesized night sky, so the
@@ -131,13 +142,13 @@ void main() {
         vec3 reflected = reflect(incident, normal);
         reflected.y = max(abs(reflected.y), 0.02);
         float skyT = pow(clamp(reflected.y, 0.0, 1.0), 0.62);
-        vec3 skyReflection = mix(vec3(0.050, 0.080, 0.105), vec3(0.007, 0.015, 0.030), skyT);
+        vec3 skyReflection = mix(uFog * 1.35, uZenithLin, skyT);
         vec2 reflectionUv = reflected.xz / reflected.y * 0.42 + vec2(uTime * 0.006, uTime * 0.0015);
         float cloud = smoothstep(0.51, 0.72, cloudFbm(reflectionUv) * 0.74 + cloudFbm(reflectionUv * 2.15 + vec2(19.0, -7.0)) * 0.26);
-        skyReflection = mix(skyReflection, vec3(0.020, 0.026, 0.034), cloud * 0.85);
+        skyReflection = mix(skyReflection, uFog * 0.75, cloud * 0.85);
         float fresnel = 0.15 + 0.85 * pow(1.0 - max(dot(-incident, normal), 0.0), 3.0);
         color = mix(color, skyReflection, fresnel);
-        color += pow(max(dot(reflected, lightDirection), 0.0), 240.0) * vec3(0.55, 0.68, 0.80) * shadow;
+        color += pow(max(dot(reflected, lightDirection), 0.0), 240.0) * uLightColor * 0.85 * shadow;
         alpha = mix(0.88, 0.985, fresnel);
     }
 
@@ -145,11 +156,12 @@ void main() {
     float density = 0.0019;
     if (uMode == 1 || uMode == 3) density += 0.0012 * (1.0 - smoothstep(-8.0, 6.0, vWorld.y));  // mist pools in the basins
     float fog = 1.0 - exp(-distanceFromCamera * density);
-    color = mix(color, vec3(0.016, 0.030, 0.045), clamp(fog, 0.0, 0.94));
+    color = mix(color, uFog, clamp(fog, 0.0, 0.94));
 
-    // Purkinje shift: scotopic vision drains warm hues from the darkest areas.
+    // Purkinje shift: scotopic vision drains warm hues from the darkest areas
+    // — only after the sun is down.
     float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
-    float nightBlend = 1.0 - smoothstep(0.0, 0.14, luminance);
+    float nightBlend = (1.0 - smoothstep(0.0, 0.14, luminance)) * uNight;
     color = mix(color, luminance * vec3(0.72, 0.86, 1.18), nightBlend * 0.35);
 
     color = vec3(1.0) - exp(-color * 3.2);

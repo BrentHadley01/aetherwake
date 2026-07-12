@@ -22,6 +22,8 @@ public:
     void drawDetails(const unsigned int* lists, int listCount, float excludeX = 0.0F, float excludeZ = 0.0F, float excludeRadius = 0.0F,
                      float maxDistance = 0.0F, float viewForwardX = 0.0F, float viewForwardZ = 0.0F) const;
     [[nodiscard]] int loadedChunkCount() const { return static_cast<int>(visible_.size()); }
+    // Pushes the position out of tree trunks and boulders (circle colliders).
+    void resolveCollision(float& x, float& z, float radius) const;
     static float heightAt(float x, float z);
 private:
     struct Chunk { unsigned int list{}; unsigned int grassList{}; int lod{-1}; std::vector<DetailInstance> details; };

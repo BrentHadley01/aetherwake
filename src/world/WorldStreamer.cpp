@@ -241,6 +241,30 @@ void WorldStreamer::drawGrass(int maxRing) const {
     }
 }
 
+void WorldStreamer::resolveCollision(float& x, float& z, float radius) const {
+    const int centerX = static_cast<int>(std::floor(x / chunkSize));
+    const int centerZ = static_cast<int>(std::floor(z / chunkSize));
+    for (int dz = -1; dz <= 1; ++dz) for (int dx = -1; dx <= 1; ++dx) {
+        const auto it = chunks_.find(chunkKey(centerX + dx, centerZ + dz));
+        if (it == chunks_.end()) continue;
+        for (const DetailInstance& instance : it->second.details) {
+            float colliderRadius;
+            if (instance.type <= 2) colliderRadius = 0.38F * instance.scale;        // conifer/snag trunks
+            else if (instance.type == 3) colliderRadius = 1.30F * instance.scale;   // boulders
+            else continue;                                                          // understory is walkable
+            const float offsetX = x - instance.x, offsetZ = z - instance.z;
+            const float distanceSquared = offsetX * offsetX + offsetZ * offsetZ;
+            const float minimum = radius + colliderRadius;
+            if (distanceSquared < minimum * minimum && distanceSquared > 1.0e-6F) {
+                const float distance = std::sqrt(distanceSquared);
+                const float push = minimum - distance;
+                x += offsetX / distance * push;
+                z += offsetZ / distance * push;
+            }
+        }
+    }
+}
+
 void WorldStreamer::drawDetails(const unsigned int* lists, int listCount, float excludeX, float excludeZ, float excludeRadius,
                                 float maxDistance, float viewForwardX, float viewForwardZ) const {
     if (!lists || listCount <= 0) return;
