@@ -68,6 +68,7 @@ void emitVertex(float x, float z, float step) {
 void WorldStreamer::update(float playerX, float playerZ) {
     const int centerX = static_cast<int>(std::floor(playerX / chunkSize));
     const int centerZ = static_cast<int>(std::floor(playerZ / chunkSize));
+    centerX_ = centerX; centerZ_ = centerZ;
     visible_.clear(); visible_.reserve((radius * 2 + 1) * (radius * 2 + 1));
     int builds = 0;
     for (int dz = -radius; dz <= radius; ++dz) for (int dx = -radius; dx <= radius; ++dx) {
@@ -148,8 +149,13 @@ void WorldStreamer::update(float playerX, float playerZ) {
     }
 }
 
-void WorldStreamer::drawTerrain() const {
+void WorldStreamer::drawTerrain(int maxRing) const {
     for (const std::uint64_t key : visible_) {
+        if (maxRing < radius) {
+            const int cx = static_cast<int>(static_cast<std::int32_t>(key >> 32));
+            const int cz = static_cast<int>(static_cast<std::int32_t>(key & 0xFFFFFFFFU));
+            if (std::max(std::abs(cx - centerX_), std::abs(cz - centerZ_)) > maxRing) continue;
+        }
         const auto it = chunks_.find(key);
         if (it != chunks_.end() && it->second.list) glCallList(it->second.list);
     }

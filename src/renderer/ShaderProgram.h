@@ -11,6 +11,7 @@ public:
     void setInt(const char* name, int value) const;
     void setFloat(const char* name, float value) const;
     void setVec3(const char* name, float x, float y, float z) const;
+    void setMat4(const char* name, const float* columnMajor16) const;
     [[nodiscard]] bool valid() const { return program_ != 0; }
     [[nodiscard]] const std::string& status() const { return status_; }
 private:

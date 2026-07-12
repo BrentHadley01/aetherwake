@@ -2,6 +2,9 @@
 
 uniform sampler2D uAlbedo;
 uniform sampler2D uRock;
+uniform sampler2DShadow uShadow;
+uniform mat4 uLight;    // world -> shadow-map texture space
+uniform int uShadowOn;
 uniform int uMode;      // 0 = authored mesh, 1 = streamed terrain, 2 = water
 uniform float uTime;
 
@@ -48,9 +51,23 @@ void main() {
         albedo = pow(texture2D(uAlbedo, vUv).rgb, vec3(2.2)) * vTint.rgb;
     }
 
+    float shadow = 1.0;
+    if (uShadowOn == 1) {
+        vec4 shadowCoord = uLight * vec4(vWorld, 1.0);
+        if (shadowCoord.x > 0.003 && shadowCoord.x < 0.997 && shadowCoord.y > 0.003 && shadowCoord.y < 0.997) {
+            vec2 texel = vec2(1.0 / 2048.0);
+            shadow = 0.0;
+            shadow += shadow2D(uShadow, shadowCoord.xyz + vec3(-0.7 * texel.x, -0.7 * texel.y, 0.0)).r;
+            shadow += shadow2D(uShadow, shadowCoord.xyz + vec3( 0.7 * texel.x, -0.7 * texel.y, 0.0)).r;
+            shadow += shadow2D(uShadow, shadowCoord.xyz + vec3(-0.7 * texel.x,  0.7 * texel.y, 0.0)).r;
+            shadow += shadow2D(uShadow, shadowCoord.xyz + vec3( 0.7 * texel.x,  0.7 * texel.y, 0.0)).r;
+            shadow *= 0.25;
+        }
+    }
+
     vec3 halfVector = normalize(lightDirection + viewDirection);
-    float diffuse = max(dot(normal, lightDirection), 0.0);
-    float specular = pow(max(dot(normal, halfVector), 0.0), shininess) * specularStrength;
+    float diffuse = max(dot(normal, lightDirection), 0.0) * shadow;
+    float specular = pow(max(dot(normal, halfVector), 0.0), shininess) * specularStrength * shadow;
     vec3 coolAmbient = vec3(0.022, 0.032, 0.048);
     vec3 skyBounce = vec3(0.012, 0.022, 0.034) * max(normal.y, 0.0);
     vec3 moonLight = vec3(0.62, 0.80, 0.95) * diffuse;

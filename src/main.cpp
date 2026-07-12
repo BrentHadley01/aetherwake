@@ -15,26 +15,77 @@
 #include <cstdlib>
 #include <vector>
 
+#ifndef GL_TEXTURE2
+#define GL_TEXTURE2 0x84C2
+#endif
 #ifndef GL_TEXTURE1
 #define GL_TEXTURE1 0x84C1
 #endif
 #ifndef GL_TEXTURE0
 #define GL_TEXTURE0 0x84C0
 #endif
+#ifndef GL_FRAMEBUFFER
+#define GL_FRAMEBUFFER 0x8D40
+#define GL_DEPTH_ATTACHMENT 0x8D00
+#define GL_FRAMEBUFFER_COMPLETE 0x8CD5
+#endif
+#ifndef GL_DEPTH_COMPONENT24
+#define GL_DEPTH_COMPONENT24 0x81A6
+#endif
+#ifndef GL_TEXTURE_COMPARE_MODE
+#define GL_TEXTURE_COMPARE_MODE 0x884C
+#define GL_TEXTURE_COMPARE_FUNC 0x884D
+#define GL_COMPARE_R_TO_TEXTURE 0x884E
+#endif
+#ifndef GL_CLAMP_TO_EDGE
+#define GL_CLAMP_TO_EDGE 0x812F
+#endif
 
 namespace {
 using ActiveTextureFn = void (APIENTRYP)(GLenum);
+using GenFramebuffersFn = void (APIENTRYP)(GLsizei, GLuint*);
+using BindFramebufferFn = void (APIENTRYP)(GLenum, GLuint);
+using FramebufferTexture2DFn = void (APIENTRYP)(GLenum, GLenum, GLenum, GLuint, GLint);
+using CheckFramebufferStatusFn = GLenum (APIENTRYP)(GLenum);
 ActiveTextureFn activeTexture{};
+GenFramebuffersFn genFramebuffers{};
+BindFramebufferFn bindFramebuffer{};
+FramebufferTexture2DFn framebufferTexture2D{};
+CheckFramebufferStatusFn checkFramebufferStatus{};
 
 void perspective(float fov, float aspect, float nearPlane, float farPlane) {
     const float top = nearPlane * std::tan(fov * 0.008726646F);
     glFrustum(-top * aspect, top * aspect, -top, top, nearPlane, farPlane);
 }
-void lookAt(float ex, float ey, float ez, float cx, float cy, float cz) {
+
+// out = a * b, all matrices column-major.
+void mul4(const float* a, const float* b, float* out) {
+    for (int column = 0; column < 4; ++column) for (int row = 0; row < 4; ++row) {
+        float sum = 0.0F;
+        for (int k = 0; k < 4; ++k) sum += a[k * 4 + row] * b[column * 4 + k];
+        out[column * 4 + row] = sum;
+    }
+}
+
+// Builds a right-handed view matrix (and optionally its inverse for
+// reconstructing world space in shaders).
+void buildView(float ex, float ey, float ez, float cx, float cy, float cz, float* view, float* inverse) {
     float fx = cx - ex, fy = cy - ey, fz = cz - ez; const float fl = std::sqrt(fx * fx + fy * fy + fz * fz); fx /= fl; fy /= fl; fz /= fl;
     float sx = -fz, sy = 0.0F, sz = fx; const float sl = std::sqrt(sx * sx + sz * sz); sx /= sl; sz /= sl;
     const float ux = sy * fz - sz * fy, uy = sz * fx - sx * fz, uz = sx * fy - sy * fx;
-    const GLfloat matrix[] = {sx, ux, -fx, 0, sy, uy, -fy, 0, sz, uz, -fz, 0, 0, 0, 0, 1}; glMultMatrixf(matrix); glTranslatef(-ex, -ey, -ez);
+    const float viewMatrix[16] = {sx, ux, -fx, 0, sy, uy, -fy, 0, sz, uz, -fz, 0,
+                                  -(sx * ex + sy * ey + sz * ez), -(ux * ex + uy * ey + uz * ez), fx * ex + fy * ey + fz * ez, 1};
+    std::copy_n(viewMatrix, 16, view);
+    if (inverse) {
+        const float inverseMatrix[16] = {sx, sy, sz, 0, ux, uy, uz, 0, -fx, -fy, -fz, 0, ex, ey, ez, 1};
+        std::copy_n(inverseMatrix, 16, inverse);
+    }
+}
+
+void buildOrtho(float halfWidth, float halfHeight, float nearPlane, float farPlane, float* m) {
+    std::fill_n(m, 16, 0.0F);
+    m[0] = 1.0F / halfWidth; m[5] = 1.0F / halfHeight;
+    m[10] = -2.0F / (farPlane - nearPlane); m[14] = -(farPlane + nearPlane) / (farPlane - nearPlane); m[15] = 1.0F;
 }
 
 // The sky is authored in display-space colors so fogged terrain (which passes
@@ -114,6 +165,10 @@ int main() {
     if (!context) { SDL_DestroyWindow(window); SDL_Quit(); return 1; }
     SDL_GL_SetSwapInterval(1);
     activeTexture = reinterpret_cast<ActiveTextureFn>(SDL_GL_GetProcAddress("glActiveTexture"));
+    genFramebuffers = reinterpret_cast<GenFramebuffersFn>(SDL_GL_GetProcAddress("glGenFramebuffers"));
+    bindFramebuffer = reinterpret_cast<BindFramebufferFn>(SDL_GL_GetProcAddress("glBindFramebuffer"));
+    framebufferTexture2D = reinterpret_cast<FramebufferTexture2DFn>(SDL_GL_GetProcAddress("glFramebufferTexture2D"));
+    checkFramebufferStatus = reinterpret_cast<CheckFramebufferStatusFn>(SDL_GL_GetProcAddress("glCheckFramebufferStatus"));
     glEnable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE); glShadeModel(GL_SMOOTH);
 
     renderer::GltfPreview environment; environment.load("assets/models/veiled_reach-realistic.glb");
@@ -121,8 +176,27 @@ int main() {
     if (worldShader.valid()) { worldShader.use(); worldShader.setInt("uAlbedo", 0); worldShader.setInt("uRock", 1); worldShader.stop(); }
     const GLuint soilTexture = renderer::loadTexture2D("assets/textures/forest_floor_albedo.png");
     const GLuint rockTexture = renderer::loadTexture2D("assets/textures/granite_lichen_albedo.png");
-    std::printf("[aetherwake] shader: %s | soil tex %u | rock tex %u\n", worldShader.status().c_str(), soilTexture, rockTexture);
     if (activeTexture && rockTexture) { activeTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, rockTexture); glEnable(GL_TEXTURE_2D); activeTexture(GL_TEXTURE0); }
+
+    // Moonlight shadow map: depth-only FBO sampled with hardware PCF.
+    constexpr int shadowSize = 2048;
+    GLuint shadowTexture = 0, shadowFbo = 0; bool shadowReady = false;
+    if (genFramebuffers && bindFramebuffer && framebufferTexture2D && checkFramebufferStatus && activeTexture) {
+        glGenTextures(1, &shadowTexture); glBindTexture(GL_TEXTURE_2D, shadowTexture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, shadowSize, shadowSize, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+        genFramebuffers(1, &shadowFbo); bindFramebuffer(GL_FRAMEBUFFER, shadowFbo);
+        framebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadowTexture, 0);
+        glDrawBuffer(GL_NONE); glReadBuffer(GL_NONE);
+        shadowReady = checkFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        bindFramebuffer(GL_FRAMEBUFFER, 0);
+        if (shadowReady) { activeTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, shadowTexture); activeTexture(GL_TEXTURE0); }
+    }
+    if (worldShader.valid()) { worldShader.use(); worldShader.setInt("uShadow", 2); worldShader.stop(); }
+    std::printf("[aetherwake] shader: %s | soil tex %u | rock tex %u | shadow map %s\n", worldShader.status().c_str(), soilTexture, rockTexture, shadowReady ? "ready" : "unavailable");
     const GLuint skyList = buildSkyList();
 
     // Blender-authored environment details, compiled once into display lists and
@@ -163,6 +237,36 @@ int main() {
         const float heroY = std::max(world::WorldStreamer::heightAt(heroX, heroZ), world::WorldStreamer::waterLevel - 1.2F);
         streamedWorld.update(heroX, heroZ);
 
+        // Depth-only moonlight pass into the shadow FBO, before the main view.
+        float lightMatrix[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        bool shadowActive = false;
+        if (shadowReady && worldShader.valid()) {
+            const float dirLength = std::sqrt(0.35F * 0.35F + 0.72F * 0.72F + 0.48F * 0.48F);
+            const float dirX = -0.35F / dirLength, dirY = 0.72F / dirLength, dirZ = 0.48F / dirLength;
+            const float snap = 420.0F / shadowSize * 2.0F;   // texel-align to stop shadow swimming
+            const float focusX = std::floor(heroX / snap) * snap, focusZ = std::floor(heroZ / snap) * snap;
+            const float focusY = world::WorldStreamer::heightAt(focusX, focusZ);
+            float lightView[16], lightProj[16];
+            buildView(focusX + dirX * 400.0F, focusY + dirY * 400.0F, focusZ + dirZ * 400.0F, focusX, focusY, focusZ, lightView, nullptr);
+            buildOrtho(210.0F, 210.0F, 60.0F, 800.0F, lightProj);
+            bindFramebuffer(GL_FRAMEBUFFER, shadowFbo);
+            glViewport(0, 0, shadowSize, shadowSize); glClear(GL_DEPTH_BUFFER_BIT);
+            glMatrixMode(GL_PROJECTION); glLoadMatrixf(lightProj);
+            glMatrixMode(GL_MODELVIEW); glLoadMatrixf(lightView);
+            glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+            glEnable(GL_POLYGON_OFFSET_FILL); glPolygonOffset(2.5F, 6.0F);
+            streamedWorld.drawTerrain(4);
+            streamedWorld.drawDetails(detailLists.data(), static_cast<int>(detailLists.size()));
+            environment.draw();
+            glDisable(GL_POLYGON_OFFSET_FILL);
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            bindFramebuffer(GL_FRAMEBUFFER, 0);
+            float projTimesView[16]; mul4(lightProj, lightView, projTimesView);
+            const float bias[16] = {0.5F, 0, 0, 0, 0, 0.5F, 0, 0, 0, 0, 0.5F, 0, 0.5F, 0.5F, 0.5F, 1};
+            mul4(bias, projTimesView, lightMatrix);
+            shadowActive = true;
+        }
+
         char title[300]; std::snprintf(title, sizeof(title), "Aetherwake | %s | Warden %d | %d chunks | WASD move, Q/E turn, Shift sprint, Space cast | %s", magic.find(spells[selected])->displayName.c_str(), warden.health, streamedWorld.loadedChunkCount(), worldShader.status().c_str()); SDL_SetWindowTitle(window, title);
 
         int width, height; SDL_GetWindowSizeInPixels(window, &width, &height); glViewport(0, 0, width, height);
@@ -181,8 +285,10 @@ int main() {
         eyeY = std::max(eyeY, world::WorldStreamer::waterLevel + 2.0F);
         static float freeCamera[6] = {0, 0, 0, 0, 0, 0}; static int freeCameraActive = -1;
         if (freeCameraActive < 0) { const char* spec = std::getenv("AETHERWAKE_CAM"); freeCameraActive = spec && std::sscanf(spec, "%f,%f,%f,%f,%f,%f", &freeCamera[0], &freeCamera[1], &freeCamera[2], &freeCamera[3], &freeCamera[4], &freeCamera[5]) == 6 ? 1 : 0; }
-        if (freeCameraActive == 1) { eyeX = freeCamera[0]; eyeY = freeCamera[1]; eyeZ = freeCamera[2]; lookAt(eyeX, eyeY, eyeZ, freeCamera[3], freeCamera[4], freeCamera[5]); heroX = freeCamera[0]; heroZ = freeCamera[2]; }
-        else lookAt(eyeX, eyeY, eyeZ, heroX + forwardX * 6.0F, heroY + 2.4F, heroZ + forwardZ * 6.0F);
+        float viewMatrix[16], inverseView[16];
+        if (freeCameraActive == 1) { eyeX = freeCamera[0]; eyeY = freeCamera[1]; eyeZ = freeCamera[2]; buildView(eyeX, eyeY, eyeZ, freeCamera[3], freeCamera[4], freeCamera[5], viewMatrix, inverseView); heroX = freeCamera[0]; heroZ = freeCamera[2]; }
+        else buildView(eyeX, eyeY, eyeZ, heroX + forwardX * 6.0F, heroY + 2.4F, heroZ + forwardZ * 6.0F, viewMatrix, inverseView);
+        glMultMatrixf(viewMatrix);
 
         // Sky first: drawn around the camera without depth so the world overlays it.
         glDepthMask(GL_FALSE); glDisable(GL_DEPTH_TEST);
@@ -191,6 +297,9 @@ int main() {
 
         if (worldShader.valid()) {
             worldShader.use(); worldShader.setFloat("uTime", elapsed);
+            worldShader.setMat4("uInverseView", inverseView);
+            worldShader.setMat4("uLight", lightMatrix);
+            worldShader.setInt("uShadowOn", shadowActive ? 1 : 0);
             worldShader.setInt("uMode", 1);
             if (soilTexture) { glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D, soilTexture); }
             streamedWorld.drawTerrain();
