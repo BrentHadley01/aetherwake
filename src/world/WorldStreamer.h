@@ -15,7 +15,8 @@ public:
     // maxRing limits how far out chunks are drawn (999 = everything); the
     // shadow depth pass only needs the rings the light frustum covers.
     void drawTerrain(int maxRing = 999) const;
-    void drawGrass(int maxRing = 1) const;
+    void drawGrass(int maxRing = 1, float eyeX = 0.0F, float eyeZ = 0.0F,
+                   float viewForwardX = 0.0F, float viewForwardZ = 0.0F) const;
     // Draws scattered environment meshes; lists holds one GL display list per detail type.
     // Detail meshes are high-poly authored assets. `maxDistance` and the
     // optional view vector cull only geometry that cannot affect the frame.

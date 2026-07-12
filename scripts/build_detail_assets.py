@@ -138,17 +138,27 @@ def add_profiled_form(name, location, profile, segments, material, scale=(1.0, 1
 
 def add_eroded_stone(name, location, radius, material, rng, scale=(1.0, 1.0, 1.0)):
     """Dense hand-shaped stone with chipped planes and multi-frequency relief."""
-    rings = []
-    ring_count = 18
-    for ring in range(ring_count):
-        t = ring / (ring_count - 1)
-        z = (t * 2.0 - 1.0) * radius
-        silhouette = max(0.025, math.sin(t * math.pi) ** 0.72) * radius
-        # Flattened crown/base and uneven shoulders keep it from reading as an ellipsoid.
-        silhouette *= 1.0 - 0.10 * math.sin(t * math.pi * 3.0 + rng.random() * 0.35)
-        rings.append((z, silhouette))
-    return add_profiled_form(name, location, rings, 40, material, scale,
-                             radial_noise=rng.uniform(0.09, 0.17), phase=rng.random() * math.tau)
+    # A broad fractured shoulder and off-axis crown produce a geological mass,
+    # not an inflated ball or a stack of concentric pancakes.
+    rings = [(radius * z, radius * r) for z, r in (
+        (-0.46, 0.24), (-0.41, 0.66), (-0.29, 0.91), (-0.10, 1.02),
+        (0.12, 0.98), (0.31, 0.84), (0.45, 0.61), (0.53, 0.38), (0.53, 0.025))]
+    obj = add_profiled_form(name, location, rings, 40, material, scale,
+                            radial_noise=rng.uniform(0.07, 0.13), phase=rng.random() * math.tau)
+    min_z = min(vertex.co.z for vertex in obj.data.vertices)
+    max_z = max(vertex.co.z for vertex in obj.data.vertices)
+    crown_x = rng.uniform(-0.22, 0.22) * radius * scale[0]
+    crown_y = rng.uniform(-0.18, 0.18) * radius * scale[1]
+    for vertex in obj.data.vertices:
+        t = max(0.0, min(1.0, (vertex.co.z - min_z) / max(0.001, max_z - min_z)))
+        crown_weight = t * t * (3.0 - 2.0 * t)
+        vertex.co.x += crown_x * crown_weight
+        vertex.co.y += crown_y * crown_weight
+    # Repeat the source plate so close-up grain remains granular instead of
+    # stretching into broad horizontal streaks around the circumference.
+    for uv in obj.data.uv_layers[0].data:
+        uv.uv.x *= 2.35; uv.uv.y *= 1.65
+    return obj
 
 
 def add_seed_grain(name, center, radius, material, direction=None):
@@ -307,7 +317,7 @@ def build_snag():
 def build_boulder():
     reset_scene()
     basalt = textured_material("BoulderBasalt", "mossy_rock_diff.jpg", roughness=0.92)
-    boulder = add_eroded_stone("FracturedBasaltBoulder", (0, 0, 0.72), 1.25, basalt,
+    boulder = add_eroded_stone("FracturedBasaltBoulder", (0, 0, 0.42), 1.25, basalt,
                                random.Random(1703), scale=(1.30, 1.05, 0.72))
     export_glb("detail_boulder.glb")
 
@@ -380,14 +390,23 @@ def build_log():
 def build_rock_variant(filename, seed, outcrop=False):
     reset_scene(); rng = random.Random(seed)
     stone = textured_material("WeatheredRockPhotoscan", "mossy_rock_diff.jpg", roughness=0.95)
-    count = 4 if outcrop else 1
+    count = 3 if outcrop else 1
     for index in range(count):
-        radius = rng.uniform(0.85, 1.35) if outcrop else 1.45
-        location = (rng.uniform(-1.0, 1.0), rng.uniform(-0.55, 0.55), rng.uniform(0.28, 0.58)) if outcrop else (0, 0, 0.42)
+        radius = rng.uniform(0.78, 1.28) if outcrop else 1.45
+        angle = index / max(count, 1) * math.tau + rng.uniform(-0.35, 0.35)
+        radial = rng.uniform(0.15, 0.72) if outcrop else 0.0
+        vertical_scale = rng.uniform(0.78, 1.18) if outcrop else 0.48
+        location = (math.cos(angle) * radial, math.sin(angle) * radial * 0.72,
+                    radius * vertical_scale * 0.43) if outcrop else (0, 0, radius * vertical_scale * 0.43)
         rock = add_eroded_stone(f"WeatheredOutcrop{index}" if outcrop else "WeatheredStoneSlab",
             location, radius, stone, rng,
-            scale=(rng.uniform(1.15, 1.75), rng.uniform(0.75, 1.20), rng.uniform(0.42, 0.78) if outcrop else 0.42))
-        rock.rotation_euler = (rng.uniform(-0.25, 0.25), rng.uniform(-0.25, 0.25), rng.random() * math.tau)
+            scale=(rng.uniform(0.82, 1.28) if outcrop else 1.42,
+                   rng.uniform(0.74, 1.18) if outcrop else 1.08,
+                   vertical_scale))
+        # Vertices already contain their authored cluster offset. Pitching the
+        # object around the GLB origin lifts one side visibly above terrain;
+        # grounded yaw retains variation without violating contact.
+        rock.rotation_euler = (0.0, 0.0, rng.random() * math.tau)
     export_glb(filename)
 
 

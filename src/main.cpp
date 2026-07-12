@@ -733,7 +733,8 @@ int main() {
             if (soilTexture) { glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D, soilTexture); }
             streamedWorld.drawTerrain();
             worldShader.setInt("uMode", 3);
-            streamedWorld.drawGrass(3);
+            worldShader.setVec3("uPlayer", heroX, heroY, heroZ);
+            streamedWorld.drawGrass(3, eyeX, eyeZ, forwardX, forwardZ);
             worldShader.setInt("uMode", 0);
             streamedWorld.drawDetails(detailLists.data(), static_cast<int>(detailLists.size()), eyeX, eyeZ, 8.0F, 420.0F, forwardX, forwardZ);
             environment.draw();

@@ -127,10 +127,13 @@ void WorldStreamer::update(float playerX, float playerZ) {
                 auto grassUnit = [&grassRng]() { grassRng ^= grassRng << 13; grassRng ^= grassRng >> 17; grassRng ^= grassRng << 5; return static_cast<float>(grassRng & 0xFFFFFFU) / 16777215.0F; };
                 chunk.grassList = glGenLists(1);
                 glNewList(chunk.grassList, GL_COMPILE);
-                glBegin(GL_TRIANGLES);
-                const int clumps = lod == 0 ? 13500 : 2100;
+                glBegin(GL_QUADS);
+                // Curved near blades use three connected ribbon sections.
+                // Mid-distance blades collapse to one tapered quad, retaining
+                // the silhouette while keeping the streamed field affordable.
+                const int clumps = lod == 0 ? 6400 : 2400;
                 const float tallBias = lod == 0 ? 0.0F : 0.22F;
-                const float widthScale = lod == 0 ? 1.0F : 1.6F;
+                const float widthScale = lod == 0 ? 0.82F : 1.5F;
                 for (int clumpIndex = 0; clumpIndex < clumps; ++clumpIndex) {
                     const float clumpX = originX + grassUnit() * chunkSize, clumpZ = originZ + grassUnit() * chunkSize;
                     if (std::sqrt(clumpX * clumpX + clumpZ * clumpZ) < 30.0F) continue;
@@ -146,26 +149,62 @@ void WorldStreamer::update(float playerX, float playerZ) {
                     if (clumpY < waterLevel + 0.8F) continue;
                     const float rise = std::abs(heightAt(clumpX + 1.6F, clumpZ) - clumpY) + std::abs(heightAt(clumpX, clumpZ + 1.6F) - clumpY);
                     if (rise / 3.2F > 0.55F) continue;                     // cliffs and scree stay bare
-                    const int blades = 4 + static_cast<int>(grassUnit() * 2.9F);
+                    const int blades = (lod == 0 ? 5 : 3) + static_cast<int>(grassUnit() * (lod == 0 ? 3.8F : 2.4F));
                     for (int blade = 0; blade < blades; ++blade) {
                         const float bx = clumpX + (grassUnit() - 0.5F) * 0.8F, bz = clumpZ + (grassUnit() - 0.5F) * 0.8F;
                         // Blades reuse the clump height (sunk slightly) so the
                         // carpet costs one heightfield sample per clump.
                         const float by = clumpY - 0.04F;
-                        const float angle = grassUnit() * 6.2831853F, lean = 0.05F + grassUnit() * 0.24F;
-                        const bool seedHead = grassUnit() < 0.05F;
-                        const float tall = seedHead ? 0.85F + grassUnit() * 0.35F : 0.30F + grassUnit() * 0.48F + tallBias;
-                        const float bladeWidth = (seedHead ? 0.028F : 0.055F) * widthScale;
-                        const float sideX = std::cos(angle) * bladeWidth, sideZ = std::sin(angle) * bladeWidth;
-                        const float tipX = bx - std::sin(angle) * lean, tipZ = bz + std::cos(angle) * lean;
+                        const float angle = grassUnit() * 6.2831853F;
+                        const float bendX = -std::sin(angle), bendZ = std::cos(angle);
+                        const float sideDirectionX = std::cos(angle), sideDirectionZ = std::sin(angle);
+                        const float species = grassUnit();
+                        const bool seedHead = species < 0.045F;
+                        const bool broadBlade = moisture > 0.57F && species > 0.72F;
+                        const bool dryBlade = moisture < 0.45F && species > 0.48F;
+                        const float lean = (0.08F + grassUnit() * 0.28F) * (broadBlade ? 0.72F : 1.0F);
+                        const float tall = seedHead ? 0.88F + grassUnit() * 0.38F :
+                                           broadBlade ? 0.38F + grassUnit() * 0.42F + tallBias :
+                                           0.32F + grassUnit() * 0.52F + tallBias;
+                        const float bladeWidth = (seedHead ? 0.020F : broadBlade ? 0.060F : 0.039F) * widthScale;
                         const float shade = 0.7F + grassUnit() * 0.45F;
-                        glNormal3f(0.0F, 1.0F, 0.0F);
-                        glColor3f((0.024F + 0.020F * (1.0F - moisture)) * shade, (0.045F + 0.032F * moisture) * shade, 0.020F * shade);
-                        glTexCoord2f(0.0F, 0.0F); glVertex3f(bx - sideX, by, bz - sideZ);
-                        glTexCoord2f(0.0F, 0.0F); glVertex3f(bx + sideX, by, bz + sideZ);
-                        if (seedHead) glColor3f(0.075F * shade, 0.095F * shade, 0.042F * shade);   // pale dry seed tip
-                        else glColor3f((0.040F + 0.026F * (1.0F - moisture)) * shade, (0.075F + 0.040F * moisture) * shade, 0.031F * shade);
-                        glTexCoord2f(1.0F, 0.0F); glVertex3f(tipX, by + tall, tipZ);
+                        float rootR = (0.022F + 0.018F * (1.0F - moisture)) * shade;
+                        float rootG = (0.050F + 0.038F * moisture) * shade;
+                        float rootB = (0.014F + 0.010F * moisture) * shade;
+                        float tipR = (0.042F + 0.025F * (1.0F - moisture)) * shade;
+                        float tipG = (0.088F + 0.050F * moisture) * shade;
+                        float tipB = (0.023F + 0.016F * moisture) * shade;
+                        if (dryBlade || seedHead) {
+                            const float dryMix = seedHead ? 0.72F : 0.42F;
+                            rootR += (0.105F - rootR) * dryMix; rootG += (0.090F - rootG) * dryMix; rootB += (0.030F - rootB) * dryMix;
+                            tipR += (0.155F - tipR) * dryMix; tipG += (0.135F - tipG) * dryMix; tipB += (0.048F - tipB) * dryMix;
+                        }
+                        const float flexibility = seedHead ? 0.58F : broadBlade ? 0.72F : 1.0F;
+                        const int sections = lod == 0 ? 3 : 1;
+                        // The ribbon normal follows its resting bend plane,
+                        // producing a highlight that rolls across the field.
+                        const float normalLength = std::sqrt(tall * tall + lean * lean);
+                        glNormal3f(-bendX * tall / normalLength, lean / normalLength, -bendZ * tall / normalLength);
+                        for (int section = 0; section < sections; ++section) {
+                            const float t0 = static_cast<float>(section) / sections;
+                            const float t1 = static_cast<float>(section + 1) / sections;
+                            const auto emitBladeEdge = [&](float t, float sign) {
+                                const float curve = t * t * (0.72F + 0.28F * t);
+                                const float centerX = bx + bendX * lean * curve;
+                                const float centerZ = bz + bendZ * lean * curve;
+                                const float halfWidth = bladeWidth * (1.0F - t * 0.94F);
+                                const float colorT = t * t;
+                                glColor3f(rootR + (tipR - rootR) * colorT,
+                                          rootG + (tipG - rootG) * colorT,
+                                          rootB + (tipB - rootB) * colorT);
+                                glTexCoord2f(t, flexibility);
+                                glVertex3f(centerX + sideDirectionX * halfWidth * sign,
+                                           by + tall * t,
+                                           centerZ + sideDirectionZ * halfWidth * sign);
+                            };
+                            emitBladeEdge(t0, -1.0F); emitBladeEdge(t0, 1.0F);
+                            emitBladeEdge(t1, 1.0F); emitBladeEdge(t1, -1.0F);
+                        }
                     }
                 }
                 glEnd();
@@ -284,11 +323,20 @@ void WorldStreamer::drawTerrain(int maxRing) const {
     }
 }
 
-void WorldStreamer::drawGrass(int maxRing) const {
+void WorldStreamer::drawGrass(int maxRing, float eyeX, float eyeZ, float viewForwardX, float viewForwardZ) const {
     for (const std::uint64_t key : visible_) {
         const int cx = static_cast<int>(static_cast<std::int32_t>(key >> 32));
         const int cz = static_cast<int>(static_cast<std::int32_t>(key & 0xFFFFFFFFU));
-        if (std::max(std::abs(cx - centerX_), std::abs(cz - centerZ_)) > maxRing) continue;
+        const int ring = std::max(std::abs(cx - centerX_), std::abs(cz - centerZ_));
+        if (ring > maxRing) continue;
+        // The centre chunk surrounds the camera and is always visible. Cull
+        // only whole outer chunks comfortably behind the view direction.
+        if (ring > 0 && (viewForwardX != 0.0F || viewForwardZ != 0.0F)) {
+            const float dx = (cx + 0.5F) * chunkSize - eyeX;
+            const float dz = (cz + 0.5F) * chunkSize - eyeZ;
+            const float distance = std::sqrt(dx * dx + dz * dz);
+            if (distance > 1.0F && (dx * viewForwardX + dz * viewForwardZ) / distance < -0.10F) continue;
+        }
         const auto it = chunks_.find(key);
         if (it != chunks_.end() && it->second.grassList) glCallList(it->second.grassList);
     }
