@@ -72,19 +72,21 @@ void main() {
     float alpha = 1.0;
 
     if (uMode == 1) {
-        vec2 uv = vWorld.xz * 0.11;
+        // Photoscan tiles cover ~2.4 m; a second, much broader scale breaks
+        // the repetition that would otherwise show across clearings.
+        vec2 uv = vWorld.xz * 0.42;
         vec3 soilNear = texture2D(uAlbedo, uv).rgb;
-        vec3 soilFar = texture2D(uAlbedo, uv * 0.171).rgb;   // second scale hides tiling
-        vec3 soil = pow(mix(soilNear, soilFar, 0.45), vec3(2.2));   // sRGB -> linear
-        vec3 rock = pow(mix(texture2D(uRock, vWorld.xz * 0.06).rgb, texture2D(uRock, vWorld.xz * 0.013).rgb, 0.4), vec3(2.2));
+        vec3 soilFar = texture2D(uAlbedo, uv * 0.135).rgb;
+        vec3 soil = pow(mix(soilNear, soilFar, 0.42), vec3(2.2));   // sRGB -> linear
+        vec3 rock = pow(mix(texture2D(uRock, vWorld.xz * 0.18).rgb, texture2D(uRock, vWorld.xz * 0.045).rgb, 0.4), vec3(2.2));
         // Micro-relief: treat the albedo as a heightfield and perturb the
-        // normal so moonlight rakes across ground detail; fades with distance.
+        // normal so raking light catches ground detail; fades with distance.
         float detailFade = exp(-length(vViewPosition) * 0.02);
         if (detailFade > 0.02) {
             float lumHere = dot(soilNear, vec3(0.333));
-            float lumX = dot(texture2D(uAlbedo, uv + vec2(0.006, 0.0)).rgb, vec3(0.333));
-            float lumZ = dot(texture2D(uAlbedo, uv + vec2(0.0, 0.006)).rgb, vec3(0.333));
-            normal = normalize(normal + vec3(lumHere - lumX, 0.0, lumHere - lumZ) * 2.4 * detailFade);
+            float lumX = dot(texture2D(uAlbedo, uv + vec2(0.0022, 0.0)).rgb, vec3(0.333));
+            float lumZ = dot(texture2D(uAlbedo, uv + vec2(0.0, 0.0022)).rgb, vec3(0.333));
+            normal = normalize(normal + vec3(lumHere - lumX, 0.0, lumHere - lumZ) * 2.0 * detailFade);
         }
         float slope = 1.0 - normal.y;
         float rockBlend = smoothstep(0.16, 0.40, slope);

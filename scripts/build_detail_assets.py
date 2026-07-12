@@ -88,7 +88,7 @@ def spray_cluster(rng, verts, faces, face_sides, origin, direction, count, blade
 def build_conifer(filename, seed, height, branch_rows, branch_length, needle_dark, needle_lit):
     reset_scene()
     rng = random.Random(seed)
-    bark = textured_material("ConiferBark", "wet_bark_albedo.png")
+    bark = textured_material("ConiferBark", "pine_bark_diff.jpg")
     dark = solid_material("NeedlesDark", needle_dark)
     lit = solid_material("NeedlesLit", needle_lit)
 
@@ -158,7 +158,7 @@ def build_conifer(filename, seed, height, branch_rows, branch_length, needle_dar
 def build_snag():
     reset_scene()
     rng = random.Random(11)
-    bark = textured_material("SnagBark", "wet_bark_albedo.png", roughness=0.95)
+    bark = textured_material("SnagBark", "pine_bark_diff.jpg", roughness=0.95)
     parts = [add_cone_between(Vector((0, 0, 0)), Vector((rng.uniform(-0.3, 0.3), rng.uniform(-0.3, 0.3), 6.4)), 0.24, 0.03, sides=7)]
     for _ in range(4):
         z = rng.uniform(2.2, 5.2)
@@ -175,7 +175,7 @@ def build_snag():
 
 def build_boulder():
     reset_scene()
-    basalt = textured_material("BoulderBasalt", "granite_lichen_albedo.png", roughness=0.92)
+    basalt = textured_material("BoulderBasalt", "mossy_rock_diff.jpg", roughness=0.92)
     bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=3, radius=1.25, location=(0, 0, 0.55))
     boulder = bpy.context.active_object
     boulder.scale = (1.3, 1.05, 0.75)
@@ -227,7 +227,7 @@ def build_fern():
 
 def build_log():
     reset_scene()
-    bark = textured_material("LogBark", "wet_bark_albedo.png", roughness=0.95)
+    bark = textured_material("LogBark", "pine_bark_diff.jpg", roughness=0.95)
     log = add_cone_between(Vector((-2.1, 0, 0.24)), Vector((2.1, 0.3, 0.30)), 0.30, 0.22, sides=9)
     log.data.materials.append(bark)
     texture = bpy.data.textures.new("log-noise", type="CLOUDS")
@@ -431,3 +431,4 @@ build_shrub()
 build_meadow_grass()
 build_wayfinder()
 print("DETAIL ASSETS EXPORTED")
+

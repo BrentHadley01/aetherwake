@@ -400,8 +400,9 @@ int main() {
     renderer::GltfPreview environment; environment.load("assets/models/veiled_reach-realistic.glb");
     renderer::ShaderProgram worldShader; worldShader.load("assets/shaders/world.vert", "assets/shaders/world.frag");
     if (worldShader.valid()) { worldShader.use(); worldShader.setInt("uAlbedo", 0); worldShader.setInt("uRock", 1); worldShader.stop(); }
-    const GLuint soilTexture = renderer::loadTexture2D("assets/textures/forest_floor_albedo.png");
-    const GLuint rockTexture = renderer::loadTexture2D("assets/textures/granite_lichen_albedo.png");
+    // CC0 photoscans from PolyHaven (forest_ground_04, mossy_rock).
+    const GLuint soilTexture = renderer::loadTexture2D("assets/textures/forest_ground_diff.jpg");
+    const GLuint rockTexture = renderer::loadTexture2D("assets/textures/mossy_rock_diff.jpg");
     if (activeTexture && rockTexture) { activeTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, rockTexture); glEnable(GL_TEXTURE_2D); activeTexture(GL_TEXTURE0); }
 
     // Moonlight shadow map: depth-only FBO sampled with hardware PCF.
