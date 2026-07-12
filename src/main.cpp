@@ -90,7 +90,7 @@ void buildOrtho(float halfWidth, float halfHeight, float nearPlane, float farPla
 
 // The sky is authored in display-space colors so fogged terrain (which passes
 // through the shader's tone map) dissolves into the horizon without a seam.
-GLuint buildSkyList() {
+GLuint buildSkyDomeList() {
     const GLuint list = glGenLists(1);
     glNewList(list, GL_COMPILE);
     const float radius = 1500.0F;
@@ -110,6 +110,13 @@ GLuint buildSkyList() {
         }
         glEnd();
     }
+    glEndList();
+    return list;
+}
+
+GLuint buildCelestialList() {
+    const GLuint list = glGenLists(1);
+    glNewList(list, GL_COMPILE);
     // Star field, kept above the haze band near the horizon.
     std::uint32_t rng = 77773U;
     auto nextUnit = [&rng]() { rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; return static_cast<float>(rng & 0xFFFFFFU) / 16777215.0F; };
@@ -197,17 +204,24 @@ int main() {
     }
     if (worldShader.valid()) { worldShader.use(); worldShader.setInt("uShadow", 2); worldShader.stop(); }
     std::printf("[aetherwake] shader: %s | soil tex %u | rock tex %u | shadow map %s\n", worldShader.status().c_str(), soilTexture, rockTexture, shadowReady ? "ready" : "unavailable");
-    const GLuint skyList = buildSkyList();
+    const GLuint skyDomeList = buildSkyDomeList();
+    const GLuint celestialList = buildCelestialList();
 
     // Blender-authored environment details, compiled once into display lists and
     // instanced across the streamed terrain by the world streamer.
-    std::array<GLuint, 3> detailLists{};
-    const std::array<const char*, 3> detailFiles{"assets/models/detail_pine.glb", "assets/models/detail_snag.glb", "assets/models/detail_boulder.glb"};
+    std::array<GLuint, 6> detailLists{};
+    const std::array<const char*, 6> detailFiles{"assets/models/detail_pine.glb", "assets/models/detail_spruce.glb", "assets/models/detail_snag.glb", "assets/models/detail_boulder.glb", "assets/models/detail_fern.glb", "assets/models/detail_log.glb"};
     for (std::size_t i = 0; i < detailFiles.size(); ++i) {
         renderer::GltfPreview detail;
         if (!detail.load(detailFiles[i])) continue;
         detailLists[i] = glGenLists(1);
         glNewList(detailLists[i], GL_COMPILE); detail.draw(); glEndList();
+    }
+    renderer::GltfPreview wayfinderModel;
+    GLuint wayfinderList = 0;
+    if (wayfinderModel.load("assets/models/detail_wayfinder.glb")) {
+        wayfinderList = glGenLists(1);
+        glNewList(wayfinderList, GL_COMPILE); wayfinderModel.draw(); glEndList();
     }
 
     world::WorldStreamer streamedWorld;
@@ -258,6 +272,9 @@ int main() {
             streamedWorld.drawTerrain(4);
             streamedWorld.drawDetails(detailLists.data(), static_cast<int>(detailLists.size()));
             environment.draw();
+            if (wayfinderList) {
+                glPushMatrix(); glTranslatef(heroX, heroY, heroZ); glRotatef(180.0F - yaw, 0.0F, 1.0F, 0.0F); glCallList(wayfinderList); glPopMatrix();
+            }
             glDisable(GL_POLYGON_OFFSET_FILL);
             glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
             bindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -290,13 +307,28 @@ int main() {
         else buildView(eyeX, eyeY, eyeZ, heroX + forwardX * 6.0F, heroY + 2.4F, heroZ + forwardZ * 6.0F, viewMatrix, inverseView);
         glMultMatrixf(viewMatrix);
 
-        // Sky first: drawn around the camera without depth so the world overlays it.
+        // Sky first: shader-driven cloud dome plus fixed-function stars/moon,
+        // all centered on the camera so translation never reveals the boundary.
         glDepthMask(GL_FALSE); glDisable(GL_DEPTH_TEST);
-        glPushMatrix(); glTranslatef(eyeX, eyeY, eyeZ); glCallList(skyList); glPopMatrix();
+        glPushMatrix(); glTranslatef(eyeX, eyeY, eyeZ);
+        if (worldShader.valid()) {
+            worldShader.use();
+            worldShader.setInt("uMode", 4);
+            worldShader.setFloat("uTime", elapsed);
+            worldShader.setVec3("uEye", eyeX, eyeY, eyeZ);
+            worldShader.setMat4("uInverseView", inverseView);
+            worldShader.setInt("uShadowOn", 0);
+            glCallList(skyDomeList);
+            worldShader.stop();
+        } else glCallList(skyDomeList);
+        glDisable(GL_TEXTURE_2D);
+        glCallList(celestialList);
+        glPopMatrix();
         glEnable(GL_DEPTH_TEST); glDepthMask(GL_TRUE);
 
         if (worldShader.valid()) {
             worldShader.use(); worldShader.setFloat("uTime", elapsed);
+            worldShader.setVec3("uEye", eyeX, eyeY, eyeZ);
             worldShader.setMat4("uInverseView", inverseView);
             worldShader.setMat4("uLight", lightMatrix);
             worldShader.setInt("uShadowOn", shadowActive ? 1 : 0);
@@ -306,8 +338,11 @@ int main() {
             worldShader.setInt("uMode", 3);
             streamedWorld.drawGrass(1);
             worldShader.setInt("uMode", 0);
-            streamedWorld.drawDetails(detailLists.data(), static_cast<int>(detailLists.size()));
+            streamedWorld.drawDetails(detailLists.data(), static_cast<int>(detailLists.size()), eyeX, eyeZ, 8.0F);
             environment.draw();
+            if (wayfinderList) {
+                glPushMatrix(); glTranslatef(heroX, heroY, heroZ); glRotatef(180.0F - yaw, 0.0F, 1.0F, 0.0F); glCallList(wayfinderList); glPopMatrix();
+            }
             // Water last: a camera-following sheet blended over the flooded basins.
             worldShader.setInt("uMode", 2);
             glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -320,8 +355,6 @@ int main() {
             glDisable(GL_BLEND);
             worldShader.stop();
         } else { streamedWorld.drawTerrain(); environment.draw(); }
-
-        glPointSize(14.0F); glBegin(GL_POINTS); glColor3f(0.05F, 0.95F, 0.70F); glVertex3f(heroX, heroY + 1.3F, heroZ); glEnd();
 
         if (autoshot && frame == 150) { saveScreenshot(autoshot, width, height); if (autoexit) running = false; }
         SDL_GL_SwapWindow(window);

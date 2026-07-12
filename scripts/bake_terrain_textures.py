@@ -108,7 +108,7 @@ def forest_floor(nodes, links):
 
 def granite_lichen(nodes, links):
     base = ramp(nodes, links, noise(nodes, 4.0).outputs["Fac"],
-                [(0.2, (0.135, 0.148, 0.165, 1)), (0.8, (0.260, 0.278, 0.300, 1))])
+                [(0.2, (0.075, 0.083, 0.094, 1)), (0.8, (0.150, 0.162, 0.178, 1))])
     voronoi = nodes.new("ShaderNodeTexVoronoi")
     voronoi.feature = "DISTANCE_TO_EDGE"
     voronoi.inputs["Scale"].default_value = 9.0
@@ -117,7 +117,7 @@ def granite_lichen(nodes, links):
     cracked = multiply_color(nodes, links, base, cracks)
     lichen_mask = ramp(nodes, links, noise(nodes, 21.0, 9.0).outputs["Fac"],
                        [(0.60, (0, 0, 0, 1)), (0.70, (1, 1, 1, 1))])
-    lichened = mix_color(nodes, links, lichen_mask, cracked, const(nodes, (0.290, 0.320, 0.190, 1)))
+    lichened = mix_color(nodes, links, lichen_mask, cracked, const(nodes, (0.150, 0.170, 0.095, 1)))
     grain = ramp(nodes, links, noise(nodes, 140.0, 3.0).outputs["Fac"],
                  [(0.3, (0.82, 0.82, 0.82, 1)), (0.7, (1.0, 1.0, 1.0, 1))])
     return multiply_color(nodes, links, lichened, grain)

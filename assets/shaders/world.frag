@@ -5,8 +5,9 @@ uniform sampler2D uRock;
 uniform sampler2DShadow uShadow;
 uniform mat4 uLight;    // world -> shadow-map texture space
 uniform int uShadowOn;
-uniform int uMode;      // 0 = authored mesh, 1 = streamed terrain, 2 = water
+uniform int uMode;      // 0 = authored mesh, 1 = streamed terrain, 2 = water, 3 = grass, 4 = sky
 uniform float uTime;
+uniform vec3 uEye;
 
 varying vec3 vNormal;
 varying vec3 vViewPosition;
@@ -14,7 +15,38 @@ varying vec2 vUv;
 varying vec4 vTint;
 varying vec3 vWorld;
 
+float hash21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float valueNoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash21(i), hash21(i + vec2(1, 0)), f.x), mix(hash21(i + vec2(0, 1)), hash21(i + vec2(1, 1)), f.x), f.y);
+}
+float cloudFbm(vec2 p) {
+    float sum = 0.0, amplitude = 0.5;
+    for (int i = 0; i < 4; ++i) { sum += valueNoise(p) * amplitude; p = p * 2.13 + 7.7; amplitude *= 0.5; }
+    return sum;
+}
+
 void main() {
+    if (uMode == 4) {
+        // Sky dome: authored gradient in vTint plus drifting moonlit clouds.
+        vec3 direction = normalize(vWorld - uEye);
+        vec3 result = vTint.rgb;
+        if (direction.y > 0.02) {
+            vec2 cloudUv = direction.xz / max(direction.y, 0.10) * 0.42 + vec2(uTime * 0.006, uTime * 0.0015);
+            float broadCloud = cloudFbm(cloudUv);
+            float wisps = cloudFbm(cloudUv * 2.15 + vec2(19.0, -7.0));
+            float cloud = smoothstep(0.51, 0.72, broadCloud * 0.74 + wisps * 0.26);
+            float horizonFade = smoothstep(0.03, 0.2, direction.y);
+            float moonGlow = pow(max(dot(direction, normalize(vec3(-0.35, 0.72, 0.48))), 0.0), 16.0);
+            vec3 cloudColor = mix(vec3(0.12, 0.145, 0.18), vec3(0.20, 0.225, 0.26), wisps);
+            cloudColor += moonGlow * vec3(0.28, 0.31, 0.36);
+            result = mix(result, cloudColor, cloud * horizonFade * 0.68);
+            result += moonGlow * 0.05 * (1.0 - cloud);
+        }
+        gl_FragColor = vec4(result, 1.0);
+        return;
+    }
     vec3 normal = normalize(vNormal);
     vec3 lightDirection = normalize(vec3(-0.35, 0.72, 0.48));
     vec3 viewDirection = normalize(-vViewPosition);
@@ -30,6 +62,15 @@ void main() {
         vec3 soilFar = texture2D(uAlbedo, uv * 0.171).rgb;   // second scale hides tiling
         vec3 soil = pow(mix(soilNear, soilFar, 0.45), vec3(2.2));   // sRGB -> linear
         vec3 rock = pow(mix(texture2D(uRock, vWorld.xz * 0.06).rgb, texture2D(uRock, vWorld.xz * 0.013).rgb, 0.4), vec3(2.2));
+        // Micro-relief: treat the albedo as a heightfield and perturb the
+        // normal so moonlight rakes across ground detail; fades with distance.
+        float detailFade = exp(-length(vViewPosition) * 0.02);
+        if (detailFade > 0.02) {
+            float lumHere = dot(soilNear, vec3(0.333));
+            float lumX = dot(texture2D(uAlbedo, uv + vec2(0.006, 0.0)).rgb, vec3(0.333));
+            float lumZ = dot(texture2D(uAlbedo, uv + vec2(0.0, 0.006)).rgb, vec3(0.333));
+            normal = normalize(normal + vec3(lumHere - lumX, 0.0, lumHere - lumZ) * 2.4 * detailFade);
+        }
         float slope = 1.0 - normal.y;
         float rockBlend = smoothstep(0.16, 0.40, slope);
         vec3 ground = mix(soil * vTint.rgb, rock, rockBlend);

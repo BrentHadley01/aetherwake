@@ -41,7 +41,10 @@ float WorldStreamer::heightAt(float x, float z) {
     const float m = fbm(x * 0.0011F + 37.2F, z * 0.0011F - 11.8F, 4);            // broad mountain mass
     const float hills = (fbm(x * 0.004F, z * 0.004F, 5) - 0.5F) * 26.0F;         // rolling relief
     const float detail = (fbm(x * 0.05F + 91.0F, z * 0.05F - 53.0F, 3) - 0.5F) * 2.2F;
-    float h = hills * (0.4F + 0.6F * m) + std::pow(m, 2.4F) * 72.0F - 14.0F + detail;
+    // Sharp ridge crests confined to the mountain mass for dramatic skylines.
+    const float ridgeNoise = fbm(x * 0.0019F - 84.0F, z * 0.0019F + 51.0F, 4);
+    const float ridge = std::pow(1.0F - std::abs(2.0F * ridgeNoise - 1.0F), 3.2F) * std::max(0.0F, m - 0.38F) * 92.0F;
+    float h = hills * (0.4F + 0.6F * m) + std::pow(m, 2.4F) * 72.0F - 14.0F + detail + ridge;
     // Flatten toward the authored Blender landmark so it sits seamlessly at the origin.
     const float distance = std::sqrt(x * x + z * z);
     const float t = smoothstep01(std::clamp((distance - 38.0F) / 72.0F, 0.0F, 1.0F));
@@ -156,7 +159,8 @@ void WorldStreamer::update(float playerX, float playerZ) {
             if (ring <= detailRadius) {
                 std::uint32_t rng = hash2(cx * 7 + 3, cz * 13 - 5) | 1U;
                 auto nextUnit = [&rng]() { rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; return static_cast<float>(rng & 0xFFFFFFU) / 16777215.0F; };
-                for (int attempt = 0; attempt < 52; ++attempt) {
+                // Types: 0 pine, 1 spruce, 2 snag, 3 boulder, 4 fern, 5 log.
+                for (int attempt = 0; attempt < 72; ++attempt) {
                     const float px = originX + nextUnit() * chunkSize, pz = originZ + nextUnit() * chunkSize;
                     const float py = heightAt(px, pz);
                     const float rise = std::abs(heightAt(px + 2.0F, pz) - heightAt(px - 2.0F, pz)) + std::abs(heightAt(px, pz + 2.0F) - heightAt(px, pz - 2.0F));
@@ -167,11 +171,18 @@ void WorldStreamer::update(float playerX, float playerZ) {
                     const float pick = nextUnit();
                     // Forest density follows the moisture field, leaving natural clearings.
                     const float forest = fbm(px * 0.009F + 5.0F, pz * 0.009F + 5.0F, 3);
-                    if (slope < 0.42F && py > waterLevel + 1.6F && pick < 0.82F && forest > 0.40F - 0.25F * nextUnit()) {
-                        const float snagChance = 0.16F;
-                        chunk.details.push_back({px, py - 0.25F, pz, 0.8F + nextUnit() * 0.9F, nextUnit() * 360.0F, nextUnit() < snagChance ? 1 : 0});
-                    } else if ((slope >= 0.18F || pick >= 0.94F) && pick >= 0.82F) {
-                        chunk.details.push_back({px, py - 0.35F, pz, 0.5F + nextUnit() * 1.3F, nextUnit() * 360.0F, 2});
+                    const bool forested = forest > 0.40F - 0.25F * nextUnit();
+                    if (py <= waterLevel + 1.6F) continue;
+                    if (pick < 0.55F && slope < 0.42F && forested) {
+                        const float species = nextUnit();
+                        const int type = species < 0.55F ? 0 : species < 0.86F ? 1 : 2;
+                        chunk.details.push_back({px, py - 0.25F, pz, 0.75F + nextUnit() * 0.8F, nextUnit() * 360.0F, type});
+                    } else if (pick < 0.82F && slope < 0.5F && forested) {
+                        chunk.details.push_back({px, py - 0.06F, pz, 0.7F + nextUnit() * 0.9F, nextUnit() * 360.0F, 4});
+                    } else if (pick < 0.89F && slope < 0.35F && forested) {
+                        chunk.details.push_back({px, py - 0.05F, pz, 0.6F + nextUnit() * 0.8F, nextUnit() * 360.0F, 5});
+                    } else if (pick >= 0.89F && (slope >= 0.18F || nextUnit() < 0.35F)) {
+                        chunk.details.push_back({px, py - 0.35F, pz, 0.5F + nextUnit() * 1.3F, nextUnit() * 360.0F, 3});
                     }
                 }
             }
@@ -214,12 +225,14 @@ void WorldStreamer::drawGrass(int maxRing) const {
     }
 }
 
-void WorldStreamer::drawDetails(const unsigned int* lists, int listCount) const {
+void WorldStreamer::drawDetails(const unsigned int* lists, int listCount, float excludeX, float excludeZ, float excludeRadius) const {
     if (!lists || listCount <= 0) return;
     for (const std::uint64_t key : visible_) {
         const auto it = chunks_.find(key);
         if (it == chunks_.end()) continue;
         for (const DetailInstance& instance : it->second.details) {
+            const float cameraDx = instance.x - excludeX, cameraDz = instance.z - excludeZ;
+            if (excludeRadius > 0.0F && cameraDx * cameraDx + cameraDz * cameraDz < excludeRadius * excludeRadius && instance.type <= 2) continue;
             const unsigned int list = lists[instance.type % listCount];
             if (!list) continue;
             glPushMatrix();

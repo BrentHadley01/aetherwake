@@ -17,7 +17,7 @@ public:
     void drawTerrain(int maxRing = 999) const;
     void drawGrass(int maxRing = 1) const;
     // Draws scattered environment meshes; lists holds one GL display list per detail type.
-    void drawDetails(const unsigned int* lists, int listCount) const;
+    void drawDetails(const unsigned int* lists, int listCount, float excludeX = 0.0F, float excludeZ = 0.0F, float excludeRadius = 0.0F) const;
     [[nodiscard]] int loadedChunkCount() const { return static_cast<int>(visible_.size()); }
     static float heightAt(float x, float z);
 private:
