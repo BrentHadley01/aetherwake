@@ -622,15 +622,21 @@ int main() {
         const CycleState cycle = computeCycle(dayTime);
 
         // Depth-only sun/moon pass into the shadow FBO, before the main view.
-        // Half-rate refresh is safe now that the translation is texel-snapped
-        // in light space: between refreshes the map is pinned, and the sun
-        // only rotates ~0.03 degrees per skipped frame.
+        // The shadow sun is quantized to 0.5-degree steps (one per second of
+        // the 12-minute day) and the map is only re-rendered when that step
+        // or the texel-snapped window actually changes. Between refreshes the
+        // map is bit-identical, so shadows cannot boil while standing still;
+        // the visible shading still follows the smoothly moving sun.
         static float lightMatrix[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         static bool shadowActive = false;
-        if (shadowReady && worldShader.valid() && (frame % 2 == 1 || !shadowActive)) {
+        static int lastShadowStep = -1;
+        static float lastSnapX = 1.0e9F, lastSnapY = 1.0e9F;
+        if (shadowReady && worldShader.valid()) {
+            const int shadowStep = static_cast<int>(dayTime * 720.0F);
+            const CycleState shadowCycle = computeCycle((static_cast<float>(shadowStep) + 0.5F) / 720.0F);
             // Keep the shadow light off the horizon: near-horizontal shadows
             // stretch one texel across metres of ground and shimmer badly.
-            float dirX = cycle.lightDir[0], dirY = std::max(cycle.lightDir[1], 0.18F), dirZ = cycle.lightDir[2];
+            float dirX = shadowCycle.lightDir[0], dirY = std::max(shadowCycle.lightDir[1], 0.18F), dirZ = shadowCycle.lightDir[2];
             const float dirLength = std::sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
             dirX /= dirLength; dirY /= dirLength; dirZ /= dirLength;
             const float focusX = heroX, focusZ = heroZ;
@@ -643,28 +649,37 @@ int main() {
             const float texelWorld = 2.0F * 210.0F / shadowSize;
             lightView[12] = std::round(lightView[12] / texelWorld) * texelWorld;
             lightView[13] = std::round(lightView[13] / texelWorld) * texelWorld;
-            buildOrtho(210.0F, 210.0F, 60.0F, 800.0F, lightProj);
-            bindFramebuffer(GL_FRAMEBUFFER, shadowFbo);
-            glViewport(0, 0, shadowSize, shadowSize); glClear(GL_DEPTH_BUFFER_BIT);
-            glMatrixMode(GL_PROJECTION); glLoadMatrixf(lightProj);
-            glMatrixMode(GL_MODELVIEW); glLoadMatrixf(lightView);
-            glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-            glEnable(GL_POLYGON_OFFSET_FILL); glPolygonOffset(2.5F, 6.0F);
-            streamedWorld.drawTerrain(4);
-            // Beyond this radius shadows are imperceptible in the moon haze;
-            // avoiding their depth submission leaves the visible scene intact.
-            streamedWorld.drawDetails(detailLists.data(), static_cast<int>(detailLists.size()), heroX, heroZ, 0.0F, 180.0F);
-            environment.draw();
-            if (wayfinderList) {
-                glPushMatrix(); glTranslatef(heroX, heroY + bob, heroZ); glRotatef(180.0F - yaw, 0.0F, 1.0F, 0.0F); glRotatef(lean, 1.0F, 0.0F, 0.0F); glCallList(wayfinderList); glPopMatrix();
+            const bool moved = std::abs(lightView[12] - lastSnapX) > 1.0e-4F || std::abs(lightView[13] - lastSnapY) > 1.0e-4F;
+            // While moving, cap refreshes at every other frame; the stale map
+            // stays self-consistent with its matrix, the window just trails
+            // the player by a fraction of a metre.
+            const bool throttled = moved && shadowStep == lastShadowStep && shadowActive && frame % 2 == 0;
+            const bool refresh = (!shadowActive || shadowStep != lastShadowStep || moved) && !throttled;
+            if (refresh) {
+                lastShadowStep = shadowStep; lastSnapX = lightView[12]; lastSnapY = lightView[13];
+                buildOrtho(210.0F, 210.0F, 60.0F, 800.0F, lightProj);
+                bindFramebuffer(GL_FRAMEBUFFER, shadowFbo);
+                glViewport(0, 0, shadowSize, shadowSize); glClear(GL_DEPTH_BUFFER_BIT);
+                glMatrixMode(GL_PROJECTION); glLoadMatrixf(lightProj);
+                glMatrixMode(GL_MODELVIEW); glLoadMatrixf(lightView);
+                glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+                glEnable(GL_POLYGON_OFFSET_FILL); glPolygonOffset(2.5F, 6.0F);
+                streamedWorld.drawTerrain(4);
+                // Beyond this radius shadows are imperceptible in the moon haze;
+                // avoiding their depth submission leaves the visible scene intact.
+                streamedWorld.drawDetails(detailLists.data(), static_cast<int>(detailLists.size()), heroX, heroZ, 0.0F, 180.0F);
+                environment.draw();
+                if (wayfinderList) {
+                    glPushMatrix(); glTranslatef(heroX, heroY + bob, heroZ); glRotatef(180.0F - yaw, 0.0F, 1.0F, 0.0F); glRotatef(lean, 1.0F, 0.0F, 0.0F); glCallList(wayfinderList); glPopMatrix();
+                }
+                glDisable(GL_POLYGON_OFFSET_FILL);
+                glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+                bindFramebuffer(GL_FRAMEBUFFER, 0);
+                float projTimesView[16]; mul4(lightProj, lightView, projTimesView);
+                const float bias[16] = {0.5F, 0, 0, 0, 0, 0.5F, 0, 0, 0, 0, 0.5F, 0, 0.5F, 0.5F, 0.5F, 1};
+                mul4(bias, projTimesView, lightMatrix);
+                shadowActive = true;
             }
-            glDisable(GL_POLYGON_OFFSET_FILL);
-            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-            bindFramebuffer(GL_FRAMEBUFFER, 0);
-            float projTimesView[16]; mul4(lightProj, lightView, projTimesView);
-            const float bias[16] = {0.5F, 0, 0, 0, 0, 0.5F, 0, 0, 0, 0, 0.5F, 0, 0.5F, 0.5F, 0.5F, 1};
-            mul4(bias, projTimesView, lightMatrix);
-            shadowActive = true;
         }
 
         char title[340]; std::snprintf(title, sizeof(title), "Aetherwake | %s | Warden %d | %d chunks | WASD move, mouse look, wheel camera, Shift sprint, Space cast | %s", magic.find(spells[selected])->displayName.c_str(), warden.health, streamedWorld.loadedChunkCount(), worldShader.status().c_str()); SDL_SetWindowTitle(window, title);

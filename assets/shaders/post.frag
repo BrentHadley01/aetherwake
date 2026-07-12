@@ -12,8 +12,15 @@ float ditherHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.
 
 void main() {
     if (uPass == 0) {
-        // Bright extract into the quarter-res chain; bilinear does the downsample.
-        vec3 color = texture2D(uScene, vUv).rgb;
+        // Bright extract into the quarter-res chain. A 4-tap box (16 source
+        // pixels via bilinear) stabilises small hot spots like the moon disc,
+        // whose bloom otherwise pulses as it drifts across texel centres.
+        vec3 color = vec3(0.0);
+        color += texture2D(uScene, vUv + uPixel.xy * vec2(-0.25, -0.25)).rgb;
+        color += texture2D(uScene, vUv + uPixel.xy * vec2( 0.25, -0.25)).rgb;
+        color += texture2D(uScene, vUv + uPixel.xy * vec2(-0.25,  0.25)).rgb;
+        color += texture2D(uScene, vUv + uPixel.xy * vec2( 0.25,  0.25)).rgb;
+        color *= 0.25;
         float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
         gl_FragColor = vec4(color * smoothstep(0.46, 0.80, luminance), 1.0);
     } else if (uPass == 1 || uPass == 2) {
