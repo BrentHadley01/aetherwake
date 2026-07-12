@@ -174,16 +174,22 @@ void main() {
     // surface. Distant HLOD foliage retains direct light and fog but skips four
     // shadow texture reads whose result is sub-pixel at this resolution.
     if (uShadowOn == 1 && distanceFromCamera < 190.0) {
-        vec4 shadowCoord = uLight * vec4(vWorld, 1.0);
+        // Normal-offset lookup: sampling from a point pushed off the surface
+        // kills the self-shadow acne on thin needles and grazing ground that
+        // otherwise sparkles as the sun moves.
+        vec4 shadowCoord = uLight * vec4(vWorld + normal * 0.30, 1.0);
         if (shadowCoord.x > 0.003 && shadowCoord.x < 0.997 && shadowCoord.y > 0.003 && shadowCoord.y < 0.997) {
-            // 3x3 PCF: the wider, softer penumbra hides the sub-texel crawl
-            // that a continuously moving sun makes unavoidable.
-            vec2 texel = vec2(1.0 / 2048.0) * 1.33;
+            // 3x3 PCF over a wide footprint: the soft penumbra turns the
+            // sub-texel crawl of a continuously moving sun into a smooth fade.
+            vec2 texel = vec2(1.0 / 2048.0) * 2.0;
             shadow = 0.0;
             for (int sy = -1; sy <= 1; ++sy)
                 for (int sx = -1; sx <= 1; ++sx)
                     shadow += shadow2D(uShadow, shadowCoord.xyz + vec3(float(sx) * texel.x, float(sy) * texel.y, 0.0)).r;
             shadow *= 0.111111;
+            // Needle geometry half-shadows itself no matter the bias; lighten
+            // its self-shadow term instead of letting it flicker.
+            shadow = mix(shadow, min(1.0, shadow + 0.45), foliageMask * 0.55);
         }
     }
 
