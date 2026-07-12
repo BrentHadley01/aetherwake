@@ -177,7 +177,8 @@ void WorldStreamer::update(float playerX, float playerZ) {
                 std::uint32_t rng = hash2(cx * 7 + 3, cz * 13 - 5) | 1U;
                 auto nextUnit = [&rng]() { rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; return static_cast<float>(rng & 0xFFFFFFU) / 16777215.0F; };
                 // Types: 0 pine, 1 spruce, 2 snag, 3 boulder, 4 fern, 5 log,
-                // 6 wildflower, 7 heather, 8 mushrooms, 9 reeds, 10 shrub, 11 meadow grass.
+                // 6 wildflower, 7 heather, 8 mushrooms, 9 reeds, 10 shrub,
+                // 11 meadow grass, 14 birch (12/13 and 15 are render-only LODs).
                 for (int attempt = 0; attempt < 104; ++attempt) {
                     const float px = originX + nextUnit() * chunkSize, pz = originZ + nextUnit() * chunkSize;
                     const float py = heightAt(px, pz);
@@ -197,7 +198,7 @@ void WorldStreamer::update(float playerX, float playerZ) {
                     } else if (py <= waterLevel + 1.15F) continue;
                     else if (pick < 0.41F && slope < 0.42F && forested) {
                         const float species = nextUnit();
-                        const int type = species < 0.55F ? 0 : species < 0.86F ? 1 : 2;
+                        const int type = moisture > 0.54F && species < 0.24F ? 14 : species < 0.58F ? 0 : species < 0.90F ? 1 : 2;
                         chunk.details.push_back({px, py - 0.25F, pz, 0.75F + nextUnit() * 0.8F, nextUnit() * 360.0F, type});
                     } else if (pick < 0.56F && slope < 0.5F && forested) {
                         chunk.details.push_back({px, py - 0.06F, pz, 0.7F + nextUnit() * 0.9F, nextUnit() * 360.0F, 4});
@@ -265,7 +266,7 @@ void WorldStreamer::resolveCollision(float& x, float& z, float radius) const {
         if (it == chunks_.end()) continue;
         for (const DetailInstance& instance : it->second.details) {
             float colliderRadius;
-            if (instance.type <= 2) colliderRadius = 0.38F * instance.scale;        // conifer/snag trunks
+            if (instance.type <= 2 || instance.type == 14) colliderRadius = 0.38F * instance.scale; // tree/snag trunks
             else if (instance.type == 3) colliderRadius = 1.30F * instance.scale;   // boulders
             else continue;                                                          // understory is walkable
             const float offsetX = x - instance.x, offsetZ = z - instance.z;
@@ -290,12 +291,13 @@ void WorldStreamer::drawDetails(const unsigned int* lists, int listCount, float 
         for (const DetailInstance& instance : it->second.details) {
             const float cameraDx = instance.x - excludeX, cameraDz = instance.z - excludeZ;
             const float distanceSquared = cameraDx * cameraDx + cameraDz * cameraDz;
-            if (excludeRadius > 0.0F && distanceSquared < excludeRadius * excludeRadius && instance.type <= 2) continue;
+            const bool tree = instance.type <= 2 || instance.type == 14;
+            if (excludeRadius > 0.0F && distanceSquared < excludeRadius * excludeRadius && tree) continue;
             if (maxDistance > 0.0F) {
                 // Small props vanish into fog/grass long before the large tree
                 // silhouettes do. This is a visibility budget, not a quality
                 // reduction for anything the player can resolve.
-                const float typeDistance = instance.type <= 2 ? maxDistance : instance.type <= 5 ? maxDistance * 0.52F : maxDistance * 0.30F;
+                const float typeDistance = tree ? maxDistance : instance.type <= 5 ? maxDistance * 0.52F : maxDistance * 0.30F;
                 if (distanceSquared > typeDistance * typeDistance) continue;
                 // The render back-end still clips off-screen geometry, but it
                 // has already paid to submit it. Cull the rear hemisphere on
@@ -311,7 +313,8 @@ void WorldStreamer::drawDetails(const unsigned int* lists, int listCount, float 
             // The far assets were authored from the same generator and retain
             // the silhouette, so this is perceptual LOD rather than a visual
             // quality toggle.
-            if (instance.type <= 1 && listCount >= 14 && distanceSquared > 125.0F * 125.0F) resolvedType += 12;
+            if (instance.type <= 1 && listCount >= 14 && distanceSquared > 70.0F * 70.0F) resolvedType += 12;
+            if (instance.type == 14 && listCount >= 16 && distanceSquared > 70.0F * 70.0F) resolvedType = 15;
             const unsigned int list = lists[resolvedType % listCount];
             if (!list) continue;
             glPushMatrix();
