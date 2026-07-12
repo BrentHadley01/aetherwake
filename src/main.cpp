@@ -40,6 +40,18 @@
 #ifndef GL_CLAMP_TO_EDGE
 #define GL_CLAMP_TO_EDGE 0x812F
 #endif
+#ifndef GL_RENDERBUFFER
+#define GL_RENDERBUFFER 0x8D41
+#define GL_COLOR_ATTACHMENT0 0x8CE0
+#define GL_READ_FRAMEBUFFER 0x8CA8
+#define GL_DRAW_FRAMEBUFFER 0x8CA9
+#endif
+#ifndef GL_RGBA8
+#define GL_RGBA8 0x8058
+#endif
+#ifndef GL_TEXTURE3
+#define GL_TEXTURE3 0x84C3
+#endif
 
 namespace {
 using ActiveTextureFn = void (APIENTRYP)(GLenum);
@@ -47,11 +59,27 @@ using GenFramebuffersFn = void (APIENTRYP)(GLsizei, GLuint*);
 using BindFramebufferFn = void (APIENTRYP)(GLenum, GLuint);
 using FramebufferTexture2DFn = void (APIENTRYP)(GLenum, GLenum, GLenum, GLuint, GLint);
 using CheckFramebufferStatusFn = GLenum (APIENTRYP)(GLenum);
+using DeleteFramebuffersFn = void (APIENTRYP)(GLsizei, const GLuint*);
+using GenRenderbuffersFn = void (APIENTRYP)(GLsizei, GLuint*);
+using BindRenderbufferFn = void (APIENTRYP)(GLenum, GLuint);
+using RenderbufferStorageFn = void (APIENTRYP)(GLenum, GLenum, GLsizei, GLsizei);
+using RenderbufferStorageMultisampleFn = void (APIENTRYP)(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
+using FramebufferRenderbufferFn = void (APIENTRYP)(GLenum, GLenum, GLenum, GLuint);
+using DeleteRenderbuffersFn = void (APIENTRYP)(GLsizei, const GLuint*);
+using BlitFramebufferFn = void (APIENTRYP)(GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum);
 ActiveTextureFn activeTexture{};
 GenFramebuffersFn genFramebuffers{};
 BindFramebufferFn bindFramebuffer{};
 FramebufferTexture2DFn framebufferTexture2D{};
 CheckFramebufferStatusFn checkFramebufferStatus{};
+DeleteFramebuffersFn deleteFramebuffers{};
+GenRenderbuffersFn genRenderbuffers{};
+BindRenderbufferFn bindRenderbuffer{};
+RenderbufferStorageFn renderbufferStorage{};
+RenderbufferStorageMultisampleFn renderbufferStorageMultisample{};
+FramebufferRenderbufferFn framebufferRenderbuffer{};
+DeleteRenderbuffersFn deleteRenderbuffers{};
+BlitFramebufferFn blitFramebuffer{};
 
 void perspective(float fov, float aspect, float nearPlane, float farPlane) {
     const float top = nearPlane * std::tan(fov * 0.008726646F);
@@ -152,6 +180,77 @@ GLuint buildCelestialList() {
     return list;
 }
 
+// Off-screen targets for the post chain: a multisampled scene buffer, its
+// single-sample resolve texture, and a quarter-res bright/blur chain.
+struct PostTargets {
+    GLuint sceneFbo{}, sceneColor{}, sceneDepth{};
+    GLuint resolveFbo{}, resolveTex{};
+    GLuint brightFbo{}, brightTex{};
+    GLuint blurFbo[2]{}, blurTex[2]{};
+    int width{}, height{};
+    bool ready{};
+};
+
+GLuint makeColorTexture(int width, int height) {
+    GLuint texture = 0; glGenTextures(1, &texture); glBindTexture(GL_TEXTURE_2D, texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    return texture;
+}
+
+bool attachColorTexture(GLuint fbo, GLuint texture) {
+    bindFramebuffer(GL_FRAMEBUFFER, fbo);
+    framebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+    return checkFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+}
+
+void destroyPostTargets(PostTargets& post) {
+    const GLuint fbos[] = {post.sceneFbo, post.resolveFbo, post.brightFbo, post.blurFbo[0], post.blurFbo[1]};
+    for (GLuint fbo : fbos) if (fbo && deleteFramebuffers) deleteFramebuffers(1, &fbo);
+    const GLuint renderbuffers[] = {post.sceneColor, post.sceneDepth};
+    for (GLuint rb : renderbuffers) if (rb && deleteRenderbuffers) deleteRenderbuffers(1, &rb);
+    const GLuint textures[] = {post.resolveTex, post.brightTex, post.blurTex[0], post.blurTex[1]};
+    for (GLuint texture : textures) if (texture) glDeleteTextures(1, &texture);
+    post = PostTargets{};
+}
+
+bool createPostTargets(PostTargets& post, int width, int height) {
+    post.width = width; post.height = height;
+    genRenderbuffers(1, &post.sceneColor); bindRenderbuffer(GL_RENDERBUFFER, post.sceneColor);
+    if (renderbufferStorageMultisample) renderbufferStorageMultisample(GL_RENDERBUFFER, 4, GL_RGBA8, width, height);
+    else renderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, width, height);
+    genRenderbuffers(1, &post.sceneDepth); bindRenderbuffer(GL_RENDERBUFFER, post.sceneDepth);
+    if (renderbufferStorageMultisample) renderbufferStorageMultisample(GL_RENDERBUFFER, 4, GL_DEPTH_COMPONENT24, width, height);
+    else renderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
+    genFramebuffers(1, &post.sceneFbo); bindFramebuffer(GL_FRAMEBUFFER, post.sceneFbo);
+    framebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, post.sceneColor);
+    framebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, post.sceneDepth);
+    bool okay = checkFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    const int quarterWidth = std::max(1, width / 4), quarterHeight = std::max(1, height / 4);
+    post.resolveTex = makeColorTexture(width, height);
+    post.brightTex = makeColorTexture(quarterWidth, quarterHeight);
+    post.blurTex[0] = makeColorTexture(quarterWidth, quarterHeight);
+    post.blurTex[1] = makeColorTexture(quarterWidth, quarterHeight);
+    genFramebuffers(1, &post.resolveFbo); okay = attachColorTexture(post.resolveFbo, post.resolveTex) && okay;
+    genFramebuffers(1, &post.brightFbo); okay = attachColorTexture(post.brightFbo, post.brightTex) && okay;
+    genFramebuffers(1, &post.blurFbo[0]); okay = attachColorTexture(post.blurFbo[0], post.blurTex[0]) && okay;
+    genFramebuffers(1, &post.blurFbo[1]); okay = attachColorTexture(post.blurFbo[1], post.blurTex[1]) && okay;
+    bindFramebuffer(GL_FRAMEBUFFER, 0);
+    post.ready = okay;
+    if (!okay) destroyPostTargets(post);
+    return post.ready;
+}
+
+void drawFullscreenQuad() {
+    glBegin(GL_QUADS);
+    glTexCoord2f(0.0F, 0.0F); glVertex2f(-1.0F, -1.0F);
+    glTexCoord2f(1.0F, 0.0F); glVertex2f(1.0F, -1.0F);
+    glTexCoord2f(1.0F, 1.0F); glVertex2f(1.0F, 1.0F);
+    glTexCoord2f(0.0F, 1.0F); glVertex2f(-1.0F, 1.0F);
+    glEnd();
+}
+
 void saveScreenshot(const char* path, int width, int height) {
     std::vector<unsigned char> pixels(static_cast<std::size_t>(width) * height * 3);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
@@ -182,6 +281,14 @@ int main() {
     bindFramebuffer = reinterpret_cast<BindFramebufferFn>(SDL_GL_GetProcAddress("glBindFramebuffer"));
     framebufferTexture2D = reinterpret_cast<FramebufferTexture2DFn>(SDL_GL_GetProcAddress("glFramebufferTexture2D"));
     checkFramebufferStatus = reinterpret_cast<CheckFramebufferStatusFn>(SDL_GL_GetProcAddress("glCheckFramebufferStatus"));
+    deleteFramebuffers = reinterpret_cast<DeleteFramebuffersFn>(SDL_GL_GetProcAddress("glDeleteFramebuffers"));
+    genRenderbuffers = reinterpret_cast<GenRenderbuffersFn>(SDL_GL_GetProcAddress("glGenRenderbuffers"));
+    bindRenderbuffer = reinterpret_cast<BindRenderbufferFn>(SDL_GL_GetProcAddress("glBindRenderbuffer"));
+    renderbufferStorage = reinterpret_cast<RenderbufferStorageFn>(SDL_GL_GetProcAddress("glRenderbufferStorage"));
+    renderbufferStorageMultisample = reinterpret_cast<RenderbufferStorageMultisampleFn>(SDL_GL_GetProcAddress("glRenderbufferStorageMultisample"));
+    framebufferRenderbuffer = reinterpret_cast<FramebufferRenderbufferFn>(SDL_GL_GetProcAddress("glFramebufferRenderbuffer"));
+    deleteRenderbuffers = reinterpret_cast<DeleteRenderbuffersFn>(SDL_GL_GetProcAddress("glDeleteRenderbuffers"));
+    blitFramebuffer = reinterpret_cast<BlitFramebufferFn>(SDL_GL_GetProcAddress("glBlitFramebuffer"));
     glEnable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE); glShadeModel(GL_SMOOTH);
 #ifndef GL_MULTISAMPLE
 #define GL_MULTISAMPLE 0x809D
@@ -213,7 +320,13 @@ int main() {
         if (shadowReady) { activeTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, shadowTexture); activeTexture(GL_TEXTURE0); }
     }
     if (worldShader.valid()) { worldShader.use(); worldShader.setInt("uShadow", 2); worldShader.stop(); }
-    std::printf("[aetherwake] shader: %s | soil tex %u | rock tex %u | shadow map %s\n", worldShader.status().c_str(), soilTexture, rockTexture, shadowReady ? "ready" : "unavailable");
+
+    // Post-processing chain: bloom, vignette, saturation, and debanding.
+    renderer::ShaderProgram postShader; postShader.load("assets/shaders/post.vert", "assets/shaders/post.frag");
+    if (postShader.valid()) { postShader.use(); postShader.setInt("uScene", 0); postShader.setInt("uBloom", 3); postShader.stop(); }
+    const bool postCapable = postShader.valid() && genRenderbuffers && bindRenderbuffer && renderbufferStorage && framebufferRenderbuffer && blitFramebuffer && deleteFramebuffers && deleteRenderbuffers;
+    PostTargets post{};
+    std::printf("[aetherwake] shader: %s | soil tex %u | rock tex %u | shadow map %s | post chain %s\n", worldShader.status().c_str(), soilTexture, rockTexture, shadowReady ? "ready" : "unavailable", postCapable ? "ready" : "unavailable");
     const GLuint skyDomeList = buildSkyDomeList();
     const GLuint celestialList = buildCelestialList();
 
@@ -302,6 +415,8 @@ int main() {
         char title[300]; std::snprintf(title, sizeof(title), "Aetherwake | %s | Warden %d | %d chunks | WASD move, Q/E turn, Shift sprint, Space cast | %s", magic.find(spells[selected])->displayName.c_str(), warden.health, streamedWorld.loadedChunkCount(), worldShader.status().c_str()); SDL_SetWindowTitle(window, title);
 
         int width, height; SDL_GetWindowSizeInPixels(window, &width, &height); glViewport(0, 0, width, height);
+        if (postCapable && (post.width != width || post.height != height)) { destroyPostTargets(post); createPostTargets(post, width, height); }
+        if (post.ready) bindFramebuffer(GL_FRAMEBUFFER, post.sceneFbo);
         glClearColor(0.26F, 0.34F, 0.40F, 1.0F); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glMatrixMode(GL_PROJECTION); glLoadIdentity(); perspective(56.0F, static_cast<float>(width) / height, 0.2F, 3000.0F); glMatrixMode(GL_MODELVIEW); glLoadIdentity();
 
@@ -370,6 +485,35 @@ int main() {
             glDisable(GL_BLEND);
             worldShader.stop();
         } else { streamedWorld.drawTerrain(); environment.draw(); }
+
+        if (post.ready) {
+            // Resolve the multisampled scene, run the quarter-res bloom chain,
+            // and composite to the backbuffer with vignette and dither.
+            bindFramebuffer(GL_READ_FRAMEBUFFER, post.sceneFbo);
+            bindFramebuffer(GL_DRAW_FRAMEBUFFER, post.resolveFbo);
+            blitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            bindFramebuffer(GL_FRAMEBUFFER, 0);
+            glDisable(GL_DEPTH_TEST); glDepthMask(GL_FALSE);
+            glMatrixMode(GL_PROJECTION); glLoadIdentity(); glMatrixMode(GL_MODELVIEW); glLoadIdentity();
+            postShader.use();
+            postShader.setFloat("uTime", elapsed);
+            const int quarterWidth = std::max(1, width / 4), quarterHeight = std::max(1, height / 4);
+            postShader.setVec3("uPixel", 1.0F / quarterWidth, 1.0F / quarterHeight, 0.0F);
+            glEnable(GL_TEXTURE_2D);
+            bindFramebuffer(GL_FRAMEBUFFER, post.brightFbo); glViewport(0, 0, quarterWidth, quarterHeight);
+            postShader.setInt("uPass", 0); glBindTexture(GL_TEXTURE_2D, post.resolveTex); drawFullscreenQuad();
+            bindFramebuffer(GL_FRAMEBUFFER, post.blurFbo[0]);
+            postShader.setInt("uPass", 1); glBindTexture(GL_TEXTURE_2D, post.brightTex); drawFullscreenQuad();
+            bindFramebuffer(GL_FRAMEBUFFER, post.blurFbo[1]);
+            postShader.setInt("uPass", 2); glBindTexture(GL_TEXTURE_2D, post.blurTex[0]); drawFullscreenQuad();
+            bindFramebuffer(GL_FRAMEBUFFER, 0); glViewport(0, 0, width, height);
+            postShader.setInt("uPass", 3);
+            if (activeTexture) { activeTexture(GL_TEXTURE3); glBindTexture(GL_TEXTURE_2D, post.blurTex[1]); activeTexture(GL_TEXTURE0); }
+            glBindTexture(GL_TEXTURE_2D, post.resolveTex);
+            drawFullscreenQuad();
+            postShader.stop();
+            glEnable(GL_DEPTH_TEST); glDepthMask(GL_TRUE);
+        }
 
         if (autoshot && frame == 150) { saveScreenshot(autoshot, width, height); if (autoexit) running = false; }
         SDL_GL_SwapWindow(window);
