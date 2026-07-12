@@ -65,6 +65,7 @@ void main() {
     vec3 normal = normalize(mat3(uInverseView[0].xyz, uInverseView[1].xyz, uInverseView[2].xyz) * vNormal);
     vec3 lightDirection = normalize(uLightDir);
     vec3 viewDirection = normalize(uEye - vWorld);
+    float distanceFromCamera = length(vViewPosition);
 
     vec3 albedo;
     float specularStrength = 0.02;
@@ -135,7 +136,10 @@ void main() {
     }
 
     float shadow = 1.0;
-    if (uShadowOn == 1) {
+    // PCF is meaningful only before atmospheric perspective has softened the
+    // surface. Distant HLOD foliage retains direct light and fog but skips four
+    // shadow texture reads whose result is sub-pixel at this resolution.
+    if (uShadowOn == 1 && distanceFromCamera < 190.0) {
         vec4 shadowCoord = uLight * vec4(vWorld, 1.0);
         if (shadowCoord.x > 0.003 && shadowCoord.x < 0.997 && shadowCoord.y > 0.003 && shadowCoord.y < 0.997) {
             vec2 texel = vec2(1.0 / 2048.0);
@@ -176,7 +180,6 @@ void main() {
         alpha = mix(0.88, 0.985, fresnel);
     }
 
-    float distanceFromCamera = length(vViewPosition);
     float density = 0.00165;
     float basinHaze = exp(-max(vWorld.y - uEye.y + 9.0, 0.0) * 0.055);
     if (uMode == 1 || uMode == 3) density += 0.00125 * basinHaze;

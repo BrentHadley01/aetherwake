@@ -529,8 +529,8 @@ int main() {
 
     // Blender-authored environment details, compiled once into display lists and
     // instanced across the streamed terrain by the world streamer.
-    std::array<GLuint, 27> detailLists{};
-    const std::array<const char*, 27> detailFiles{"assets/models/detail_pine.glb", "assets/models/detail_spruce.glb", "assets/models/detail_snag.glb", "assets/models/detail_boulder.glb", "assets/models/detail_fern.glb", "assets/models/detail_log.glb", "assets/models/detail_wildflower.glb", "assets/models/detail_heather.glb", "assets/models/detail_mushrooms.glb", "assets/models/detail_reeds.glb", "assets/models/detail_shrub.glb", "assets/models/detail_meadow_grass.glb", "assets/models/detail_pine_lod.glb", "assets/models/detail_spruce_lod.glb", "assets/models/detail_birch.glb", "assets/models/detail_birch_lod.glb", "assets/models/detail_clover.glb", "assets/models/detail_sedge.glb", "assets/models/detail_dry_grass.glb", "assets/models/detail_forest_litter.glb", "assets/models/detail_pebbles.glb", "assets/models/detail_lupine.glb", "assets/models/detail_moss_mat.glb", "assets/models/detail_rock_slab.glb", "assets/models/detail_rock_outcrop.glb", "assets/models/detail_stump.glb", "assets/models/detail_branch_pile.glb"};
+    std::array<GLuint, 31> detailLists{};
+    const std::array<const char*, 31> detailFiles{"assets/models/detail_pine.glb", "assets/models/detail_spruce.glb", "assets/models/detail_snag.glb", "assets/models/detail_boulder.glb", "assets/models/detail_fern.glb", "assets/models/detail_log.glb", "assets/models/detail_wildflower.glb", "assets/models/detail_heather.glb", "assets/models/detail_mushrooms.glb", "assets/models/detail_reeds.glb", "assets/models/detail_shrub.glb", "assets/models/detail_meadow_grass.glb", "assets/models/detail_pine_lod.glb", "assets/models/detail_spruce_lod.glb", "assets/models/detail_birch.glb", "assets/models/detail_birch_lod.glb", "assets/models/detail_clover.glb", "assets/models/detail_sedge.glb", "assets/models/detail_dry_grass.glb", "assets/models/detail_forest_litter.glb", "assets/models/detail_pebbles.glb", "assets/models/detail_lupine.glb", "assets/models/detail_moss_mat.glb", "assets/models/detail_rock_slab.glb", "assets/models/detail_rock_outcrop.glb", "assets/models/detail_stump.glb", "assets/models/detail_branch_pile.glb", "assets/models/detail_pine_far.glb", "assets/models/detail_spruce_far.glb", "assets/models/detail_pine_impostor.glb", "assets/models/detail_spruce_impostor.glb"};
     for (std::size_t i = 0; i < detailFiles.size(); ++i) {
         renderer::GltfPreview detail;
         if (!detail.load(detailFiles[i])) continue;
@@ -553,6 +553,7 @@ int main() {
     const char* autoshot = std::getenv("AETHERWAKE_AUTOSHOT");
     const char* autospell = std::getenv("AETHERWAKE_AUTOSPELL");
     const bool autoexit = std::getenv("AETHERWAKE_AUTOEXIT") != nullptr;
+    const int autoFrame = std::getenv("AETHERWAKE_AUTOFRAME") ? std::max(30, std::atoi(std::getenv("AETHERWAKE_AUTOFRAME"))) : 150;
     bool running = true, won = false; Uint64 previous = SDL_GetTicks(); int frame = 0; float elapsed = 0.0F; Uint64 steadyStart = 0;
     // 0 = first person at the Wayfinder's eye; larger values form the
     // collision-safe third-person camera boom.
@@ -788,7 +789,7 @@ int main() {
             glEnable(GL_DEPTH_TEST); glDepthMask(GL_TRUE);
         }
 
-        if (autoshot && frame == 150) { saveScreenshot(autoshot, width, height); if (autoexit) running = false; }
+        if (autoshot && frame == autoFrame) { saveScreenshot(autoshot, width, height); if (autoexit) running = false; }
         SDL_GL_SwapWindow(window);
     }
     const float seconds = static_cast<float>(SDL_GetTicks()) / 1000.0F;

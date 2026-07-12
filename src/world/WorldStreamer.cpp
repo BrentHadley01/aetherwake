@@ -402,8 +402,16 @@ void WorldStreamer::drawDetails(const unsigned int* lists, int listCount, float 
             // The far assets were authored from the same generator and retain
             // the silhouette, so this is perceptual LOD rather than a visual
             // quality toggle.
-            const float lodDistance = shadowPass ? 28.0F : 55.0F;
-            if (instance.type <= 1 && listCount >= 14 && distanceSquared > lodDistance * lodDistance) resolvedType += 12;
+            // Individual needles resolve only in the immediate near field.
+            // The authored LOD now mirrors the three-arm crown and continuous
+            // bough silhouette, so switching at 32 m removes sub-pixel work
+            // without collapsing the forest canopy.
+            const float lodDistance = shadowPass ? 20.0F : 32.0F;
+            const float farLodDistance = shadowPass ? 45.0F : 90.0F;
+            const float impostorDistance = shadowPass ? 88.0F : 195.0F;
+            if (instance.type <= 1 && listCount >= 31 && distanceSquared > impostorDistance * impostorDistance) resolvedType = 29 + instance.type;
+            else if (instance.type <= 1 && listCount >= 29 && distanceSquared > farLodDistance * farLodDistance) resolvedType = 27 + instance.type;
+            else if (instance.type <= 1 && listCount >= 14 && distanceSquared > lodDistance * lodDistance) resolvedType += 12;
             if (instance.type == 14 && listCount >= 16 && distanceSquared > lodDistance * lodDistance) resolvedType = 15;
             const unsigned int list = lists[resolvedType % listCount];
             if (!list) continue;

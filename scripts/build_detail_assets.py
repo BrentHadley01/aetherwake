@@ -230,53 +230,102 @@ def build_conifer(filename, seed, height, branch_rows, branch_length, needle_dar
     lit = solid_material("NeedlesLit", needle_lit)
 
     wood = []
-    # Wandering tapered trunk built from stacked segments.
+    # Wandering tapered trunk built from stacked segments, with a broader
+    # buttress and fine upper taper instead of a constant utility pole.
     high_detail = branch_rows > 20
-    segments = 10 if high_detail else 6
+    far_detail = "_far" in filename
+    is_spruce = "spruce" in filename
+    segments = 12 if high_detail else 5 if far_detail else 7
     base = Vector((0, 0, 0))
     drift = Vector((0, 0, 0))
     points = [base.copy()]
     for i in range(1, segments + 1):
-        drift += Vector((rng.uniform(-0.14, 0.14), rng.uniform(-0.14, 0.14), 0))
+        drift += Vector((rng.uniform(-0.10, 0.10), rng.uniform(-0.10, 0.10), 0))
         points.append(Vector((drift.x, drift.y, height * i / segments)))
     for i in range(segments):
         t0, t1 = i / segments, (i + 1) / segments
-        wood.append(add_cone_between(points[i], points[i + 1], 0.26 * (1 - t0) + 0.03, 0.26 * (1 - t1) + 0.03, sides=16 if high_detail else 8))
+        base_radius = 0.34 if is_spruce else 0.30
+        r0 = base_radius * (1.0 - t0) ** 1.18 + 0.025
+        r1 = base_radius * (1.0 - t1) ** 1.18 + 0.025
+        if i == 0: r0 *= 1.34
+        wood.append(add_cone_between(points[i], points[i + 1], r0, r1, sides=20 if high_detail else 7 if far_detail else 10))
+
+    # Exposed root flares physically anchor the near asset into the soil.
+    if high_detail:
+        for root_index in range(7):
+            angle = root_index / 7.0 * math.tau + rng.uniform(-0.18, 0.18)
+            p0 = Vector((math.cos(angle) * 0.16, math.sin(angle) * 0.16, 0.14))
+            p1 = Vector((math.cos(angle) * rng.uniform(0.52, 0.90), math.sin(angle) * rng.uniform(0.52, 0.90), 0.015))
+            wood.append(add_cone_between(p0, p1, rng.uniform(0.10, 0.16), 0.015, sides=10))
 
     spray_verts, spray_faces, spray_side = [], [], []
-    branch_count = 0
-    for row in range(branch_rows):
-        t = 0.22 + 0.74 * row / (branch_rows - 1)
+    whorls = ((17 if is_spruce else 18) if high_detail else
+              (9 if is_spruce else 10) if far_detail else (13 if is_spruce else 14))
+    for row in range(whorls):
+        t = 0.14 + 0.79 * row / (whorls - 1)
         trunk_point = points[min(int(t * segments), segments - 1)].lerp(points[min(int(t * segments) + 1, segments)], (t * segments) % 1.0)
-        azimuth = row * GOLDEN_ANGLE + rng.uniform(-0.25, 0.25)
-        length = branch_length * (1.0 - t) ** 0.85 + 0.25
-        droop = -0.30 + t * 0.12
-        direction = Vector((math.cos(azimuth), math.sin(azimuth), droop)).normalized()
-        tip = trunk_point + direction * length + Vector((0, 0, 0.10 * length))
-        wood.append(add_cone_between(trunk_point, tip, 0.045 * (1.0 - t * 0.5), 0.008, sides=9 if high_detail else 5))
-        branch_count += 1
-        # Secondary twigs create a readable hierarchy: trunk -> limb -> twig
-        # -> needle cluster. Sky gaps are retained instead of hiding the crown
-        # in a simplified cone-shaped canopy shell.
-        limb_side = direction.cross(Vector((0, 0, 1))).normalized()
-        for station in (0.28, 0.52, 0.76, 0.96):
-            origin = trunk_point.lerp(tip, station)
-            for fork_sign in ((-1.0, 1.0) if high_detail else (1.0,)):
-                fork = (direction * 0.55 + limb_side * fork_sign * rng.uniform(0.45, 0.95) + Vector((0, 0, rng.uniform(0.12, 0.42)))).normalized()
-                twig_tip = origin + fork * (0.34 + (1.0 - t) * 0.38)
-                twig = add_cone_between(origin, twig_tip, 0.020 * (1.0 - t * 0.45), 0.004, sides=7 if high_detail else 4)
-                wood.append(twig)
-                # Dense individual needles are distributed along paired twigs
-                # on both sides of each limb, creating a continuous bough.
-                for bough_index in range(3):
-                    bough_center = origin.lerp(twig_tip, 0.30 + bough_index * 0.30) + limb_side * rng.uniform(-0.10, 0.10)
-                    spray_cluster(rng, spray_verts, spray_faces, spray_side, bough_center, fork, count=64 if high_detail else 24,
-                                  blade_length=(0.20 if high_detail else 0.48) * (1.0 - t * 0.22), spread=0.72,
-                                  width_min=0.025 if high_detail else 0.16, width_max=0.065 if high_detail else 0.30)
+        whorl_rotation = row * GOLDEN_ANGLE * 0.43 + rng.uniform(-0.16, 0.16)
+        for arm in range(3):
+            if row > 2 and rng.random() < (0.08 if high_detail else 0.02 if far_detail else 0.04):
+                continue  # storm gap; breaks perfect radial repetition
+            azimuth = whorl_rotation + arm * math.tau / 3.0 + rng.uniform(-0.12, 0.12)
+            crown_taper = (1.0 - t) ** (0.62 if is_spruce else 0.78)
+            length = branch_length * crown_taper * rng.uniform(0.82, 1.12) + 0.20
+            droop = (-0.52 if is_spruce else -0.30) + t * (0.40 if is_spruce else 0.27)
+            direction = Vector((math.cos(azimuth), math.sin(azimuth), droop)).normalized()
+            # Curved primary limb: depressed shoulder, then a subtly lifted tip.
+            elbow = trunk_point + direction * length * 0.52 + Vector((0, 0, -0.06 * length))
+            tip = trunk_point + direction * length + Vector((0, 0, (0.10 if is_spruce else 0.16) * length))
+            branch_radius = (0.060 if is_spruce else 0.052) * (1.0 - t * 0.52)
+            wood.append(add_cone_between(trunk_point, elbow, branch_radius, branch_radius * 0.55, sides=10 if high_detail else 5 if far_detail else 6))
+            wood.append(add_cone_between(elbow, tip, branch_radius * 0.58, 0.006, sides=8 if high_detail else 4 if far_detail else 5))
+
+            limb_direction = (tip - trunk_point).normalized()
+            limb_side = limb_direction.cross(Vector((0, 0, 1))).normalized()
+            # Lowest whorls retain a minority of dead, broken branches—the
+            # foliage crown starts gradually instead of at a hard cutoff.
+            dead_limb = row < 3 and ((arm + row) % 3 == 0)
+            stations = (0.30, 0.62, 0.90) if far_detail else (0.24, 0.46, 0.68, 0.88)
+            # Needle-bearing short shoots continue along the primary limb;
+            # secondary twig clusters alone leave an artificial bare rail.
+            if not dead_limb:
+                primary_stations = ((0.22, 0.38, 0.54, 0.70, 0.86, 0.97) if high_detail else
+                                    (0.30, 0.60, 0.88) if far_detail else (0.28, 0.50, 0.72, 0.92))
+                for primary_index, primary_station in enumerate(primary_stations):
+                    primary_center = trunk_point.lerp(tip, primary_station)
+                    primary_center += limb_side * (0.08 if primary_index % 2 else -0.08) * (1.0 - t)
+                    shoot_direction = (limb_direction + limb_side * (0.24 if primary_index % 2 else -0.24)
+                                       + Vector((0, 0, 0.12 if not is_spruce else -0.03))).normalized()
+                    spray_cluster(rng, spray_verts, spray_faces, spray_side, primary_center, shoot_direction,
+                                  count=46 if high_detail else 10 if far_detail else 16,
+                                  blade_length=(0.24 if high_detail else 0.64 if far_detail else 0.46) * (1.0 - t * 0.16), spread=0.82,
+                                  width_min=0.030 if high_detail else 0.24 if far_detail else 0.18,
+                                  width_max=0.078 if high_detail else 0.46 if far_detail else 0.34)
+            for station in stations:
+                origin = trunk_point.lerp(tip, station)
+                fork_signs = (-1.0, 1.0) if high_detail else ((-1.0,) if (arm + row) % 2 else (1.0,))
+                for fork_sign in fork_signs:
+                    fork = (limb_direction * 0.48 + limb_side * fork_sign * rng.uniform(0.56, 0.96)
+                            + Vector((0, 0, rng.uniform(0.16, 0.46) if not is_spruce else rng.uniform(-0.02, 0.24)))).normalized()
+                    twig_length = (0.30 + (1.0 - t) * 0.34) * rng.uniform(0.82, 1.18)
+                    twig_tip = origin + fork * twig_length
+                    twig = add_cone_between(origin, twig_tip, 0.017 * (1.0 - t * 0.40), 0.0035, sides=7 if high_detail else 4)
+                    wood.append(twig)
+                    if dead_limb: continue
+                    boughs = 3 if high_detail else 1 if far_detail else 2
+                    for bough_index in range(boughs):
+                        bough_center = origin.lerp(twig_tip, 0.27 + bough_index * (0.62 / max(1, boughs - 1)))
+                        bough_center += limb_side * rng.uniform(-0.08, 0.08)
+                        spray_cluster(rng, spray_verts, spray_faces, spray_side, bough_center, fork,
+                                      count=40 if high_detail else 10 if far_detail else 18,
+                                      blade_length=(0.21 if high_detail else 0.62 if far_detail else 0.44) * (1.0 - t * 0.18), spread=0.70,
+                                      width_min=0.028 if high_detail else 0.23 if far_detail else 0.17,
+                                      width_max=0.075 if high_detail else 0.44 if far_detail else 0.33)
     # Crown tuft at the very top.
-    spray_cluster(rng, spray_verts, spray_faces, spray_side, points[-1], Vector((0, 0, 1)), count=90 if high_detail else 30,
-                  blade_length=0.25 if high_detail else 0.48, spread=0.62,
-                  width_min=0.025 if high_detail else 0.16, width_max=0.065 if high_detail else 0.30)
+    spray_cluster(rng, spray_verts, spray_faces, spray_side, points[-1], Vector((0, 0, 1)), count=120 if high_detail else 24 if far_detail else 44,
+                  blade_length=0.27 if high_detail else 0.68 if far_detail else 0.52, spread=0.62,
+                  width_min=0.025 if high_detail else 0.24 if far_detail else 0.16,
+                  width_max=0.065 if high_detail else 0.44 if far_detail else 0.30)
 
     spray_mesh = bpy.data.meshes.new("NeedleSprays")
     spray_mesh.from_pydata(spray_verts, [], spray_faces)
@@ -293,6 +342,48 @@ def build_conifer(filename, seed, height, branch_rows, branch_length, needle_dar
     bpy.ops.object.select_all(action="SELECT")
     bpy.context.view_layer.objects.active = wood[0]
     bpy.ops.object.join()
+    export_glb(filename)
+
+
+def build_conifer_impostor(filename, seed, height, crown_width, is_spruce=False):
+    """Ultra-far layered crown: species silhouette in only a few dozen faces."""
+    reset_scene(); rng = random.Random(seed)
+    bark = solid_material("FarTrunk", (0.18, 0.095, 0.045, 1.0), roughness=0.96)
+    dark = solid_material("FarCrownDark", (0.018, 0.050, 0.026, 1.0), roughness=0.92)
+    lit = solid_material("FarCrownLit", (0.032, 0.083, 0.039, 1.0), roughness=0.90)
+    trunk = add_cone_between(Vector((0, 0, 0)), Vector((0.08, -0.04, height)), 0.30, 0.028, sides=8)
+    trunk.name = "FarSilhouetteTrunk"; trunk.data.materials.append(bark)
+    verts, faces, materials = [], [], []
+    tiers = 15 if is_spruce else 14
+    for tier in range(tiers):
+        t = 0.14 + tier / max(1, tiers - 1) * 0.80
+        z = height * t
+        radius = crown_width * (1.0 - t) ** (0.58 if is_spruce else 0.72) + 0.18
+        rotation = tier * GOLDEN_ANGLE * 0.37
+        for arm in range(4):
+            angle = rotation + arm * math.tau / 4.0
+            direction = Vector((math.cos(angle), math.sin(angle), 0))
+            side = Vector((-math.sin(angle), math.cos(angle), 0))
+            root = Vector((0, 0, z + (0.03 if tier % 2 else -0.03) * height / tiers))
+            mid = root + direction * radius * 0.56 + Vector((0, 0, -radius * (0.09 if is_spruce else 0.035)))
+            tip = root + direction * radius + Vector((0, 0, -radius * (0.18 if is_spruce else 0.08)))
+            half = radius * (0.18 if is_spruce else 0.14)
+            vertical = radius * (0.20 if is_spruce else 0.16)
+            index = len(verts)
+            verts.extend([root + Vector((0, 0, vertical)), mid - side * half,
+                          tip - Vector((0, 0, vertical * 0.32)), mid + side * half,
+                          root - Vector((0, 0, vertical * 0.72))])
+            faces.append((index, index + 1, index + 2, index + 3, index + 4))
+            materials.append((tier + arm) % 2)
+    # A narrow leader closes the crown without a cone-shaped canopy shell.
+    for arm in range(3):
+        angle = arm * math.tau / 3.0 + 0.4
+        side = Vector((-math.sin(angle), math.cos(angle), 0)) * crown_width * 0.10
+        root = Vector((0, 0, height * 0.86)); tip = Vector((0.08, -0.04, height * 1.02))
+        index = len(verts); verts.extend([root - side, tip, root + side]); faces.append((index, index + 1, index + 2)); materials.append(arm % 2)
+    mesh = bpy.data.meshes.new("LayeredFarCrown"); mesh.from_pydata(verts, [], faces); mesh.materials.append(dark); mesh.materials.append(lit)
+    for polygon, material_index in zip(mesh.polygons, materials): polygon.material_index = material_index
+    crown = bpy.data.objects.new("LayeredFarCrown", mesh); bpy.context.collection.objects.link(crown)
     export_glb(filename)
 
 
@@ -991,6 +1082,12 @@ build_conifer("detail_pine_lod.glb", seed=7, height=11.5, branch_rows=18, branch
               needle_dark=(0.022, 0.060, 0.028, 1.0), needle_lit=(0.038, 0.095, 0.040, 1.0))
 build_conifer("detail_spruce_lod.glb", seed=19, height=8.0, branch_rows=16, branch_length=3.1,
               needle_dark=(0.020, 0.052, 0.032, 1.0), needle_lit=(0.033, 0.082, 0.048, 1.0))
+build_conifer("detail_pine_far.glb", seed=7, height=11.5, branch_rows=10, branch_length=2.6,
+              needle_dark=(0.022, 0.060, 0.028, 1.0), needle_lit=(0.038, 0.095, 0.040, 1.0))
+build_conifer("detail_spruce_far.glb", seed=19, height=8.0, branch_rows=9, branch_length=3.1,
+              needle_dark=(0.020, 0.052, 0.032, 1.0), needle_lit=(0.033, 0.082, 0.048, 1.0))
+build_conifer_impostor("detail_pine_impostor.glb", seed=707, height=11.5, crown_width=3.1, is_spruce=False)
+build_conifer_impostor("detail_spruce_impostor.glb", seed=719, height=8.0, crown_width=3.5, is_spruce=True)
 build_birch("detail_birch.glb", seed=151, branch_rows=24, leaves_per_twig=18)
 build_birch("detail_birch_lod.glb", seed=151, branch_rows=14, leaves_per_twig=7)
 build_snag()
