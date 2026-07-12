@@ -8,6 +8,8 @@ random.seed(17)
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "assets" / "models"
 OUT.mkdir(parents=True, exist_ok=True)
+TEXTURES = ROOT / "assets" / "textures"
+TEXTURES.mkdir(parents=True, exist_ok=True)
 
 bpy.ops.object.select_all(action="SELECT")
 bpy.ops.object.delete(use_global=False)
@@ -24,11 +26,34 @@ def pbr_material(name, base_a, base_b, roughness, metallic=0.0, scale=3.0, moss=
     ramp.color_ramp.elements[0].color = (*base_a, 1)
     ramp.color_ramp.elements[1].color = (*base_b, 1)
     bump = nodes.new('ShaderNodeBump'); bump.inputs['Strength'].default_value = 0.45; bump.inputs['Distance'].default_value = 0.16
-    links.new(noise.outputs['Fac'], ramp.inputs['Fac']); links.new(ramp.outputs['Color'], bsdf.inputs['Base Color']); links.new(noise.outputs['Fac'], bump.inputs['Height']); links.new(bump.outputs['Normal'], bsdf.inputs['Normal']); links.new(bsdf.outputs['BSDF'], output.inputs['Surface'])
+    links.new(noise.outputs['Fac'], ramp.inputs['Fac']); links.new(noise.outputs['Fac'], bump.inputs['Height']); links.new(bump.outputs['Normal'], bsdf.inputs['Normal']); links.new(bsdf.outputs['BSDF'], output.inputs['Surface'])
+    # Blender procedural nodes do not survive glTF export. Generate a compact,
+    # tileable albedo map and connect it directly so the native renderer receives
+    # real texture data instead of a flat fallback color.
+    size = 128
+    image = bpy.data.images.new(name + ' Albedo', width=size, height=size)
+    rng = random.Random(sum(ord(c) for c in name))
+    pixels = []
+    for y in range(size):
+        for x in range(size):
+            wave = math.sin(x * 0.19) * math.cos(y * 0.13) * 0.10
+            grain = (rng.random() - 0.5) * 0.16 + wave
+            t = max(0.0, min(1.0, 0.5 + grain))
+            color = [base_a[i] * (1.0 - t) + base_b[i] * t for i in range(3)]
+            if moss and rng.random() > 0.91:
+                color = [color[0] * 0.55, min(1.0, color[1] * 1.65), color[2] * 0.65]
+            color = [min(1.0, pow(max(0.0, c), 0.58) * 1.35) for c in color]
+            pixels.extend((*color, 1.0))
+    image.pixels = pixels
+    image.filepath_raw = str(TEXTURES / (name.lower().replace(' ', '_') + '_albedo.png'))
+    image.file_format = 'PNG'
+    image.save()
+    texture_node = nodes.new('ShaderNodeTexImage'); texture_node.image = image; texture_node.interpolation = 'Linear'
+    links.new(texture_node.outputs['Color'], bsdf.inputs['Base Color'])
     bsdf.inputs['Roughness'].default_value = roughness; bsdf.inputs['Metallic'].default_value = metallic
     if moss:
         mix = nodes.new('ShaderNodeMixRGB'); mix.blend_type = 'MULTIPLY'; mix.inputs[2].default_value = (0.25, 0.55, 0.24, 1); mix.inputs[0].default_value = 0.28
-        links.new(ramp.outputs['Color'], mix.inputs[1]); links.new(mix.outputs['Color'], bsdf.inputs['Base Color'])
+        links.new(texture_node.outputs['Color'], mix.inputs[1]); links.new(mix.outputs['Color'], bsdf.inputs['Base Color'])
     return mat
 
 def emission_material(name, color, strength):
@@ -112,7 +137,16 @@ bpy.ops.object.camera_add(location=(16.5, -25, 9.5)); camera = bpy.context.objec
 scene = bpy.context.scene; scene.render.engine = 'BLENDER_EEVEE'; scene.render.resolution_x = 1600; scene.render.resolution_y = 900; scene.render.resolution_percentage = 100; scene.render.image_settings.file_format = 'PNG'; scene.render.film_transparent = False
 scene.world.color = (0.012, 0.025, 0.04)
 scene.render.filepath = str(OUT / 'veiled_reach-realistic-preview.png')
+# Ensure every runtime mesh has UVs for the exported albedo maps.
+for obj in [o for o in scene.objects if o.type == 'MESH' and o != fog]:
+    if not obj.data.uv_layers:
+        bpy.ops.object.select_all(action='DESELECT'); obj.select_set(True); bpy.context.view_layer.objects.active = obj
+        bpy.ops.object.mode_set(mode='EDIT'); bpy.ops.mesh.select_all(action='SELECT'); bpy.ops.uv.smart_project(angle_limit=1.15, island_margin=0.02); bpy.ops.object.mode_set(mode='OBJECT')
 bpy.ops.wm.save_as_mainfile(filepath=str(OUT / 'veiled_reach-realistic.blend'))
-bpy.ops.export_scene.gltf(filepath=str(OUT / 'veiled_reach-realistic.glb'), export_format='GLB', use_selection=False)
+# Volumetric geometry is a Blender-only render feature. Exporting it as a GLB
+# mesh makes it an opaque box in the native renderer, so omit it at runtime.
+fog.hide_set(True)
+bpy.ops.export_scene.gltf(filepath=str(OUT / 'veiled_reach-realistic.glb'), export_format='GLB', use_selection=False, use_visible=True)
+fog.hide_set(False)
 bpy.ops.render.render(write_still=True)
 print('Created realistic Veiled Reach asset set.')

@@ -59,6 +59,13 @@ add_custom_command(TARGET Aetherwake POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_directory
     "${CMAKE_CURRENT_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:Aetherwake>/assets")
 
+# Assets are authored independently of C++ sources, so copy them on every
+# build rather than only when the executable happens to relink.
+add_custom_target(AetherwakeAssets ALL
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets" "${CMAKE_CURRENT_BINARY_DIR}/assets")
+add_dependencies(Aetherwake AetherwakeAssets)
+
 # Ship the SDL runtime next to the Windows executable so it can launch outside
 # the build environment.
 if(AETHERWAKE_FETCH_DEPS)
