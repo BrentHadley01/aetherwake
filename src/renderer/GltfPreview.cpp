@@ -12,7 +12,7 @@
 #include <vector>
 
 namespace aetherwake::renderer {
-struct GltfPreview::Impl { tinygltf::Model model; std::vector<GLuint> textures; };
+struct GltfPreview::Impl { tinygltf::Model model; std::vector<GLuint> textures; GLuint whiteTexture{}; };
 
 bool GltfPreview::load(const std::string& path) {
     impl_ = new Impl{};
@@ -23,6 +23,7 @@ bool GltfPreview::load(const std::string& path) {
     }
     impl_->textures.resize(impl_->model.images.size(), 0);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    const unsigned char white[] = {255, 255, 255, 255}; glGenTextures(1, &impl_->whiteTexture); glBindTexture(GL_TEXTURE_2D, impl_->whiteTexture); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR); glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, white);
     for (std::size_t i = 0; i < impl_->model.images.size(); ++i) {
         const auto& image = impl_->model.images[i];
         if (image.image.empty() || image.width <= 0 || image.height <= 0) continue;
@@ -44,7 +45,7 @@ static unsigned int indexAt(const tinygltf::Model& model, const tinygltf::Access
     if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) return *reinterpret_cast<const unsigned short*>(raw);
     return *reinterpret_cast<const unsigned int*>(raw);
 }
-static void drawNode(const tinygltf::Model& model, const std::vector<GLuint>& textures, int nodeIndex) {
+static void drawNode(const tinygltf::Model& model, const std::vector<GLuint>& textures, GLuint whiteTexture, int nodeIndex) {
     const auto& node = model.nodes[nodeIndex]; glPushMatrix();
     // Blender volume materials are not polygonal GLB surfaces. The authored fog
     // cube must be skipped here and recreated by the runtime fog pass later.
@@ -81,17 +82,18 @@ static void drawNode(const tinygltf::Model& model, const std::vector<GLuint>& te
             else if (name.find("shell") != std::string::npos) { r = 0.02F; g = 0.19F; b = 0.12F; }
             else if (name.find("rune") != std::string::npos || name.find("aether") != std::string::npos) { r = 0.03F; g = 0.9F; b = 0.60F; }
         }
-        if (texture && texcoords) { glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D, texture); glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE); r = g = b = 1.0F; } else glDisable(GL_TEXTURE_2D);
-        const GLfloat materialColor[] = {r, g, b, 1.0F}; glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, materialColor); glBegin(GL_TRIANGLES);
+        glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D, texture && texcoords ? texture : whiteTexture); glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE); if (texture && texcoords) r = g = b = 1.0F;
+        glColor3f(r, g, b); glBegin(GL_TRIANGLES);
         const int count = primitive.indices >= 0 ? static_cast<int>(model.accessors[primitive.indices].count) : static_cast<int>(positions.count);
         for (int i = 0; i < count; ++i) { const unsigned int idx = primitive.indices >= 0 ? indexAt(model, model.accessors[primitive.indices], i) : static_cast<unsigned int>(i); if (normals) glNormal3fv(normals + idx * normalStride); if (texcoords) glTexCoord2fv(texcoords + idx * texcoordStride); glVertex3fv(vertices + idx * stride); }
         glEnd();
     }
-    for (int child : node.children) drawNode(model, textures, child); glPopMatrix();
+    for (int child : node.children) drawNode(model, textures, whiteTexture, child);
+    glPopMatrix();
 }
 void GltfPreview::draw() const {
     if (!impl_ || impl_->model.scenes.empty()) return;
     const int scene = impl_->model.defaultScene >= 0 ? impl_->model.defaultScene : 0;
-    for (int node : impl_->model.scenes[scene].nodes) drawNode(impl_->model, impl_->textures, node);
+    for (int node : impl_->model.scenes[scene].nodes) drawNode(impl_->model, impl_->textures, impl_->whiteTexture, node);
 }
 }
