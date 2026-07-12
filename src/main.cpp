@@ -622,17 +622,27 @@ int main() {
         const CycleState cycle = computeCycle(dayTime);
 
         // Depth-only sun/moon pass into the shadow FBO, before the main view.
-        // Refreshing every other frame halves the geometry submitted with no
-        // visible lag (the light direction moves very slowly).
+        // Half-rate refresh is safe now that the translation is texel-snapped
+        // in light space: between refreshes the map is pinned, and the sun
+        // only rotates ~0.03 degrees per skipped frame.
         static float lightMatrix[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         static bool shadowActive = false;
         if (shadowReady && worldShader.valid() && (frame % 2 == 1 || !shadowActive)) {
-            const float dirX = cycle.lightDir[0], dirY = std::max(cycle.lightDir[1], 0.10F), dirZ = cycle.lightDir[2];
-            const float snap = 420.0F / shadowSize * 2.0F;   // texel-align to stop shadow swimming
-            const float focusX = std::floor(heroX / snap) * snap, focusZ = std::floor(heroZ / snap) * snap;
+            // Keep the shadow light off the horizon: near-horizontal shadows
+            // stretch one texel across metres of ground and shimmer badly.
+            float dirX = cycle.lightDir[0], dirY = std::max(cycle.lightDir[1], 0.18F), dirZ = cycle.lightDir[2];
+            const float dirLength = std::sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
+            dirX /= dirLength; dirY /= dirLength; dirZ /= dirLength;
+            const float focusX = heroX, focusZ = heroZ;
             const float focusY = world::WorldStreamer::heightAt(focusX, focusZ);
             float lightView[16], lightProj[16];
             buildView(focusX + dirX * 400.0F, focusY + dirY * 400.0F, focusZ + dirZ * 400.0F, focusX, focusY, focusZ, lightView, nullptr);
+            // Texel-snap in LIGHT space: the view rows lie in the shadow map's
+            // plane, so quantizing the translation there is exact and stops
+            // shadow edges from re-rasterizing differently as the player moves.
+            const float texelWorld = 2.0F * 210.0F / shadowSize;
+            lightView[12] = std::round(lightView[12] / texelWorld) * texelWorld;
+            lightView[13] = std::round(lightView[13] / texelWorld) * texelWorld;
             buildOrtho(210.0F, 210.0F, 60.0F, 800.0F, lightProj);
             bindFramebuffer(GL_FRAMEBUFFER, shadowFbo);
             glViewport(0, 0, shadowSize, shadowSize); glClear(GL_DEPTH_BUFFER_BIT);

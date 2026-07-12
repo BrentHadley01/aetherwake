@@ -26,6 +26,7 @@ varying vec3 vViewPosition;
 varying vec2 vUv;
 varying vec4 vTint;
 varying vec3 vWorld;
+varying vec3 vMaterial;
 
 float hash21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float valueNoise(vec2 p) {
@@ -72,6 +73,11 @@ void main() {
     float shininess = 64.0;
     float alpha = 1.0;
     float foliageMask = 0.0;
+    float materialRoughness = 0.84;
+    float materialMetallic = 0.0;
+    float materialClass = 0.0;
+    float surfaceOcclusion = 1.0;
+    vec3 sampledAlbedo = vec3(1.0);
 
     if (uMode == 1) {
         // Photoscan tiles cover ~2.4 m; a second, much broader scale breaks
@@ -111,6 +117,7 @@ void main() {
         float wet = smoothstep(-5.6, -7.6, vWorld.y);        // dark saturated shoreline
         albedo = mix(ground, ground * vec3(0.40, 0.39, 0.35), wet);
         specularStrength = 0.03 + 0.25 * wet;
+        materialRoughness = mix(0.92, 0.48, wet);
     } else if (uMode == 2) {
         // Noise-perturbed phases keep the ripples from forming periodic
         // contour bands at glancing angles.
@@ -123,17 +130,44 @@ void main() {
         albedo = vec3(0.006, 0.026, 0.034);
         specularStrength = 0.9;
         shininess = 130.0;
+        materialRoughness = 0.08;
         alpha = 0.86;
     } else if (uMode == 3) {
         albedo = vTint.rgb;   // grass blades carry their albedo as vertex color
         specularStrength = 0.015;
         foliageMask = 1.0;
+        materialRoughness = 0.86;
     } else {
-        albedo = pow(texture2D(uAlbedo, vUv).rgb, vec3(2.2)) * vTint.rgb;
-        // Green-dominant authored materials are foliage; bark, stone, cloth,
-        // and skin remain on the opaque surface path.
-        foliageMask = smoothstep(0.015, 0.09, albedo.g - max(albedo.r, albedo.b));
+        sampledAlbedo = texture2D(uAlbedo, vUv).rgb;
+        albedo = pow(sampledAlbedo, vec3(2.2)) * vTint.rgb;
+        materialRoughness = vMaterial.x > 0.001 ? clamp(vMaterial.x, 0.04, 1.0) : 0.84;
+        materialMetallic = clamp(vMaterial.y, 0.0, 1.0);
+        materialClass = floor(vMaterial.z + 0.5);
+        foliageMask = materialClass > 2.5 && materialClass < 3.5 ? 1.0 :
+                       smoothstep(0.025, 0.11, albedo.g - max(albedo.r, albedo.b));
+
+        // Reconstruct small-scale relief from the authored color plate. This
+        // is intentionally near-field and material-gated to avoid distant
+        // shimmer and the cost of sampling every foliage fragment.
+        float microFade = exp(-distanceFromCamera * 0.038);
+        if (microFade > 0.04 && (materialClass > 0.5 && materialClass < 2.5 || materialClass > 3.5 && materialClass < 4.5)) {
+            float heightHere = dot(sampledAlbedo, vec3(0.299, 0.587, 0.114));
+            float heightU = dot(texture2D(uAlbedo, vUv + vec2(0.0017, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
+            float heightV = dot(texture2D(uAlbedo, vUv + vec2(0.0, 0.0017)).rgb, vec3(0.299, 0.587, 0.114));
+            float relief = materialClass < 1.5 ? 2.6 : materialClass < 2.5 ? 1.9 : 0.55;
+            normal = normalize(normal + vec3(heightHere - heightU, 0.0, heightHere - heightV) * relief * microFade);
+        }
+        // Rock undersides and near-vertical creases receive restrained contact
+        // darkening so boulders sit in the soil instead of glowing above it.
+        if (materialClass > 0.5 && materialClass < 1.5)
+            surfaceOcclusion = mix(0.58, 1.0, smoothstep(-0.12, 0.58, normal.y));
     }
+
+    // Convert glTF roughness/metalness to the legacy shader's highlight model.
+    // Broad rough highlights remain visible on stone and cloth; polished metal
+    // and wet surfaces retain tight, colored reflections.
+    specularStrength = max(specularStrength, mix(0.34, 0.012, materialRoughness));
+    shininess = mix(170.0, 9.0, materialRoughness * materialRoughness);
 
     float shadow = 1.0;
     // PCF is meaningful only before atmospheric perspective has softened the
@@ -142,13 +176,14 @@ void main() {
     if (uShadowOn == 1 && distanceFromCamera < 190.0) {
         vec4 shadowCoord = uLight * vec4(vWorld, 1.0);
         if (shadowCoord.x > 0.003 && shadowCoord.x < 0.997 && shadowCoord.y > 0.003 && shadowCoord.y < 0.997) {
-            vec2 texel = vec2(1.0 / 2048.0);
+            // 3x3 PCF: the wider, softer penumbra hides the sub-texel crawl
+            // that a continuously moving sun makes unavoidable.
+            vec2 texel = vec2(1.0 / 2048.0) * 1.33;
             shadow = 0.0;
-            shadow += shadow2D(uShadow, shadowCoord.xyz + vec3(-0.7 * texel.x, -0.7 * texel.y, 0.0)).r;
-            shadow += shadow2D(uShadow, shadowCoord.xyz + vec3( 0.7 * texel.x, -0.7 * texel.y, 0.0)).r;
-            shadow += shadow2D(uShadow, shadowCoord.xyz + vec3(-0.7 * texel.x,  0.7 * texel.y, 0.0)).r;
-            shadow += shadow2D(uShadow, shadowCoord.xyz + vec3( 0.7 * texel.x,  0.7 * texel.y, 0.0)).r;
-            shadow *= 0.25;
+            for (int sy = -1; sy <= 1; ++sy)
+                for (int sx = -1; sx <= 1; ++sx)
+                    shadow += shadow2D(uShadow, shadowCoord.xyz + vec3(float(sx) * texel.x, float(sy) * texel.y, 0.0)).r;
+            shadow *= 0.111111;
         }
     }
 
@@ -157,11 +192,22 @@ void main() {
     float specular = pow(max(dot(normal, halfVector), 0.0), shininess) * specularStrength * shadow;
     vec3 skyBounce = uAmbient * 0.55 * max(normal.y, 0.0);
     vec3 directLight = uLightColor * diffuse;
-    vec3 color = albedo * (uAmbient + skyBounce + directLight) + specular * uLightColor;
+    vec3 specularColor = mix(vec3(1.0), max(albedo, vec3(0.025)), materialMetallic);
+    vec3 color = albedo * (uAmbient + skyBounce + directLight) * (1.0 - materialMetallic * 0.72) * surfaceOcclusion
+               + specular * specularColor * uLightColor;
     // Thin leaves and needles transmit light from behind. This keeps conifer
     // boughs dimensional instead of collapsing into black cut-outs.
     float transmission = max(dot(-normal, lightDirection), 0.0) * foliageMask;
     color += albedo * uLightColor * transmission * (0.22 + 0.16 * max(normal.y, 0.0));
+    if (materialClass > 3.5 && materialClass < 4.5) {
+        float clothSheen = pow(1.0 - max(dot(normal, viewDirection), 0.0), 4.0);
+        color += albedo * uLightColor * clothSheen * 0.075;
+    } else if (materialClass > 4.5 && materialClass < 5.5) {
+        float skinBackscatter = max(dot(-normal, lightDirection), 0.0);
+        color += albedo * vec3(1.0, 0.42, 0.24) * skinBackscatter * 0.10;
+    } else if (materialClass > 6.5 && materialClass < 7.5) {
+        color += albedo * (1.15 + 0.18 * sin(uTime * 2.1 + vWorld.y * 4.0));
+    }
 
     if (uMode == 2) {
         // Fresnel-weighted reflection of the synthesized night sky, so the
