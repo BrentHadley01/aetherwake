@@ -466,6 +466,7 @@ int main() {
     // collision-safe third-person camera boom.
     float cameraDistance = 20.0F;
     float cameraElevation = 18.0F;
+    float firstPersonPitch = 0.0F;
 
     while (running) {
         const Uint64 now = SDL_GetTicks(); const float dt = std::min(0.05F, static_cast<float>(now - previous) / 1000.0F); previous = now; elapsed += dt; ++frame;
@@ -474,10 +475,11 @@ int main() {
             if (event.type == SDL_EVENT_QUIT) running = false;
             if (event.type == SDL_EVENT_MOUSE_WHEEL) cameraDistance = std::clamp(cameraDistance - event.wheel.y * 2.2F, 0.0F, 30.0F);
             if (event.type == SDL_EVENT_MOUSE_MOTION) {
-                // Mouse-right turns right; mouse-up lowers the third-person
-                // boom and therefore looks upward, matching common RPG input.
+                // Mouse-right turns right. Third-person changes the orbit;
+                // first-person uses a separate conventional, non-inverted aim.
                 yaw -= event.motion.xrel * 0.13F;
-                cameraElevation = std::clamp(cameraElevation + event.motion.yrel * 0.13F, -28.0F, 65.0F);
+                if (cameraDistance < 1.0F) firstPersonPitch = std::clamp(firstPersonPitch - event.motion.yrel * 0.13F, -70.0F, 70.0F);
+                else cameraElevation = std::clamp(cameraElevation + event.motion.yrel * 0.13F, -28.0F, 65.0F);
             }
             if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) { if (event.key.key == SDLK_ESCAPE) running = false; if (event.key.key >= SDLK_1 && event.key.key <= SDLK_4) selected = static_cast<int>(event.key.key - SDLK_1); if (event.key.key == SDLK_SPACE && !won) { const auto cast = magic.cast(player, &warden, &heart, spells[selected]); won = cast.accepted && warden.health == 0; } }
         }
@@ -581,8 +583,9 @@ int main() {
         float viewMatrix[16], inverseView[16];
         if (freeCameraActive == 1) { eyeX = freeCamera[0]; eyeY = freeCamera[1]; eyeZ = freeCamera[2]; buildView(eyeX, eyeY, eyeZ, freeCamera[3], freeCamera[4], freeCamera[5], viewMatrix, inverseView); heroX = freeCamera[0]; heroZ = freeCamera[2]; }
         else if (orbit < 1.0F) {
-            const float lookDistance = 6.0F, horizontalLook = std::cos(elevationRadians) * lookDistance;
-            buildView(eyeX, eyeY, eyeZ, eyeX + forwardX * horizontalLook, eyeY + std::sin(elevationRadians) * lookDistance, eyeZ + forwardZ * horizontalLook, viewMatrix, inverseView);
+            const float pitchRadians = firstPersonPitch * 0.017453293F;
+            const float lookDistance = 6.0F, horizontalLook = std::cos(pitchRadians) * lookDistance;
+            buildView(eyeX, eyeY, eyeZ, eyeX + forwardX * horizontalLook, eyeY + std::sin(pitchRadians) * lookDistance, eyeZ + forwardZ * horizontalLook, viewMatrix, inverseView);
         } else buildView(eyeX, eyeY, eyeZ, heroX + forwardX * 6.0F, heroY + 2.4F, heroZ + forwardZ * 6.0F, viewMatrix, inverseView);
         glMultMatrixf(viewMatrix);
 
