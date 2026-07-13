@@ -2,6 +2,9 @@
 
 uniform sampler2D uAlbedo;
 uniform sampler2D uRock;
+uniform sampler2D uForestAlbedo;
+uniform sampler2D uForestNormal;
+uniform sampler2D uForestArm;
 uniform sampler2DShadow uShadow;
 uniform sampler2DShadow uShadowOld;
 uniform mat4 uLight;    // world -> shadow-map texture space
@@ -91,9 +94,26 @@ void main() {
         // Photoscan tiles cover ~2.4 m; a second, much broader scale breaks
         // the repetition that would otherwise show across clearings.
         vec2 uv = vWorld.xz * 0.42;
+        // A shallow height-derived parallax shift gives the photoscan actual
+        // depth at walking distance instead of leaving gravel painted flat.
+        // It fades quickly to avoid shimmer and texture swimming in vistas.
+        float parallaxFade = exp(-distanceFromCamera * 0.065);
+        float reliefHeight = dot(texture2D(uAlbedo, uv).rgb, vec3(0.299, 0.587, 0.114));
+        vec2 grazingView = viewDirection.xz / max(abs(viewDirection.y), 0.42);
+        uv -= grazingView * (reliefHeight - 0.48) * 0.024 * parallaxFade;
         vec3 soilNear = texture2D(uAlbedo, uv).rgb;
         vec3 soilFar = texture2D(uAlbedo, uv * 0.135).rgb;
         vec3 soil = pow(mix(soilNear, soilFar, 0.42), vec3(2.2));   // sRGB -> linear
+        // A dedicated CC0 leaf-litter scan supplies the organic layer that a
+        // gravel trail cannot synthesize. World-space sampling keeps it stable
+        // across streamed chunk seams and matches its real 1.3 m capture size.
+        float detailFade = exp(-length(vViewPosition) * 0.02);
+        vec2 forestUv = vWorld.xz * 0.77;
+        vec3 forestSample = texture2D(uForestAlbedo, forestUv).rgb;
+        vec3 forestAlbedo = pow(forestSample, vec3(2.2));
+        float forestLuma = dot(forestAlbedo, vec3(0.2126, 0.7152, 0.0722));
+        forestAlbedo = mix(vec3(forestLuma), forestAlbedo, 0.62) * vec3(0.82, 0.90, 0.78);
+        vec3 forestArm = texture2D(uForestArm, forestUv).rgb;
         // Triplanar projection keeps cliff faces from stretching the rock
         // photoscan vertically. A broad top-down sample breaks repetition.
         vec3 projectionWeight = pow(abs(normal), vec3(4.0));
@@ -105,7 +125,6 @@ void main() {
         vec3 rock = pow(mix(rockDetail, texture2D(uRock, vWorld.xz * 0.045).rgb, 0.32), vec3(2.2));
         // Micro-relief: treat the albedo as a heightfield and perturb the
         // normal so raking light catches ground detail; fades with distance.
-        float detailFade = exp(-length(vViewPosition) * 0.02);
         if (detailFade > 0.02) {
             float lumHere = dot(soilNear, vec3(0.333));
             float lumX = dot(texture2D(uAlbedo, uv + vec2(0.0022, 0.0)).rgb, vec3(0.333));
@@ -118,7 +137,14 @@ void main() {
         float fineNoise = valueNoise(vWorld.xz * 0.19 - vec2(11.0, 4.0));
         float moss = smoothstep(0.44, 0.72, patchNoise * 0.72 + fineNoise * 0.28) * (1.0 - rockBlend);
         vec3 forestSoil = soil * vTint.rgb;
-        forestSoil = mix(forestSoil, forestSoil * vec3(0.52, 0.94, 0.43), moss * 0.48);
+        float litterBiome = smoothstep(0.36, 0.69, patchNoise * 0.58 + fineNoise * 0.42) * (1.0 - rockBlend);
+        forestSoil = mix(forestSoil, forestAlbedo * mix(vec3(0.82), vTint.rgb, 0.22), litterBiome * 0.82);
+        // Decode the scan's OpenGL tangent-space normal onto the horizontal
+        // terrain plane. Strong detail remains only nearby and on litter.
+        vec3 mappedForestNormal = texture2D(uForestNormal, forestUv).xyz * 2.0 - 1.0;
+        mappedForestNormal = normalize(vec3(mappedForestNormal.x, mappedForestNormal.z, mappedForestNormal.y));
+        normal = normalize(mix(normal, mappedForestNormal, litterBiome * detailFade * 0.58));
+        forestSoil = mix(forestSoil, forestSoil * vec3(0.42, 0.78, 0.36), moss * 0.42);
         // Broad decaying-leaf and humus islands bridge the visual gap between
         // the macro terrain and actual litter meshes. Their two scales avoid
         // a uniformly gravelly floor beneath dense woodland.
@@ -133,7 +159,11 @@ void main() {
         float wet = smoothstep(-5.6, -7.6, vWorld.y);        // dark saturated shoreline
         albedo = mix(ground, ground * vec3(0.40, 0.39, 0.35), wet);
         specularStrength = 0.03 + 0.25 * wet;
-        materialRoughness = mix(0.92, 0.48, wet);
+        materialRoughness = mix(mix(0.92, clamp(forestArm.g, 0.68, 0.98), litterBiome), 0.48, wet);
+        // Albedo-derived cavity shading supplies restrained contact depth in
+        // pebbles and litter without baking another large texture channel.
+        float cavity = smoothstep(-0.08, 0.16, reliefHeight - dot(soilNear, vec3(0.333)));
+        surfaceOcclusion = mix(0.72, 1.0, cavity * 0.65 + normal.y * 0.35) * mix(1.0, mix(0.64, 1.0, forestArm.r), litterBiome);
     } else if (uMode == 2) {
         // Noise-perturbed phases keep the ripples from forming periodic
         // contour bands at glancing angles.
@@ -149,10 +179,11 @@ void main() {
         materialRoughness = 0.08;
         alpha = 0.86;
     } else if (uMode == 3) {
-        albedo = vTint.rgb;   // grass blades carry their albedo as vertex color
+        albedo = vTint.rgb;   // grass and baked debris carry vertex albedo
         specularStrength = 0.015;
-        foliageMask = 1.0;
-        materialRoughness = 0.86;
+        foliageMask = step(-0.5, vUv.y);
+        materialRoughness = mix(0.97, 0.86, foliageMask);
+        surfaceOcclusion = mix(0.82, 1.0, foliageMask);
     } else {
         sampledAlbedo = texture2D(uAlbedo, vUv).rgb;
         albedo = pow(sampledAlbedo, vec3(2.2)) * vTint.rgb;

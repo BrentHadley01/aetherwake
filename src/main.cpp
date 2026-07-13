@@ -392,11 +392,11 @@ CycleState computeCycle(float dayTime) {
         const float lift = smoothstepf(0.0F, 0.07F, -sunY) * 0.95F;
         for (int i = 0; i < 3; ++i) cycle.lightColor[i] = moon[i] * lift;
     }
-    const float ambientNight[3] = {0.022F, 0.032F, 0.048F}, ambientDay[3] = {0.085F, 0.115F, 0.16F};
-    const float fogNight[3] = {0.016F, 0.030F, 0.045F}, fogDay[3] = {0.10F, 0.16F, 0.24F};
-    const float zenithNight[3] = {0.004F, 0.010F, 0.022F}, zenithDay[3] = {0.025F, 0.080F, 0.22F};
-    const float cloudDarkNight[3] = {0.115F, 0.14F, 0.175F}, cloudDarkDay[3] = {0.25F, 0.30F, 0.36F};
-    const float cloudLitNight[3] = {0.20F, 0.225F, 0.26F}, cloudLitDay[3] = {0.56F, 0.61F, 0.68F};
+    const float ambientNight[3] = {0.020F, 0.027F, 0.038F}, ambientDay[3] = {0.074F, 0.087F, 0.102F};
+    const float fogNight[3] = {0.014F, 0.024F, 0.034F}, fogDay[3] = {0.095F, 0.128F, 0.158F};
+    const float zenithNight[3] = {0.004F, 0.009F, 0.018F}, zenithDay[3] = {0.040F, 0.078F, 0.145F};
+    const float cloudDarkNight[3] = {0.095F, 0.115F, 0.14F}, cloudDarkDay[3] = {0.21F, 0.24F, 0.28F};
+    const float cloudLitNight[3] = {0.17F, 0.19F, 0.22F}, cloudLitDay[3] = {0.46F, 0.49F, 0.52F};
     blend(cycle.ambient, ambientNight, ambientDay);
     blend(cycle.fogLinear, fogNight, fogDay);
     blend(cycle.zenithLinear, zenithNight, zenithDay);
@@ -600,12 +600,26 @@ int main() {
 
     renderer::GltfPreview environment; environment.load("assets/models/veiled_reach-realistic.glb");
     renderer::ShaderProgram worldShader; worldShader.load("assets/shaders/world.vert", "assets/shaders/world.frag");
-    if (worldShader.valid()) { worldShader.use(); worldShader.setInt("uAlbedo", 0); worldShader.setInt("uRock", 1); worldShader.stop(); }
+    if (worldShader.valid()) {
+        worldShader.use();
+        worldShader.setInt("uAlbedo", 0); worldShader.setInt("uRock", 1);
+        worldShader.setInt("uForestAlbedo", 5); worldShader.setInt("uForestNormal", 6); worldShader.setInt("uForestArm", 7);
+        worldShader.stop();
+    }
     // CC0 photoscans from PolyHaven (forest_ground_04, mossy_rock).
     const GLuint soilTexture = renderer::loadTexture2D("assets/textures/forest_ground_diff.jpg");
     const GLuint rockTexture = renderer::loadTexture2D("assets/textures/mossy_rock_diff.jpg");
+    const GLuint forestAlbedoTexture = renderer::loadTexture2D("assets/textures/leaves_forest_ground_diff_2k.jpg");
+    const GLuint forestNormalTexture = renderer::loadTexture2D("assets/textures/leaves_forest_ground_nor_gl_2k.jpg");
+    const GLuint forestArmTexture = renderer::loadTexture2D("assets/textures/leaves_forest_ground_arm_2k.jpg");
     const GLuint spellParticleTexture = buildSpellParticleTexture();
     if (activeTexture && rockTexture) { activeTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, rockTexture); glEnable(GL_TEXTURE_2D); activeTexture(GL_TEXTURE0); }
+    if (activeTexture) {
+        activeTexture(GL_TEXTURE5); glBindTexture(GL_TEXTURE_2D, forestAlbedoTexture); glEnable(GL_TEXTURE_2D);
+        activeTexture(GL_TEXTURE6); glBindTexture(GL_TEXTURE_2D, forestNormalTexture); glEnable(GL_TEXTURE_2D);
+        activeTexture(GL_TEXTURE7); glBindTexture(GL_TEXTURE_2D, forestArmTexture); glEnable(GL_TEXTURE_2D);
+        activeTexture(GL_TEXTURE0);
+    }
 
     // Sun/moon shadows use TWO depth maps: the previous and next time-slice
     // of the moving light. Both are static between updates (no edge boil) and

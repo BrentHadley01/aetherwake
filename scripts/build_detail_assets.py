@@ -695,32 +695,51 @@ def build_reeds():
 
 
 def build_shrub():
+    """Natural bilberry-like shrub with curved canes and secondary twigs."""
     reset_scene()
     rng = random.Random(113)
-    wood = solid_material("ShrubWood", (0.075, 0.038, 0.020, 1.0))
-    leaf = solid_material("ShrubLeaves", (0.028, 0.098, 0.025, 1.0))
-    berry = solid_material("ShrubBerries", (0.16, 0.018, 0.025, 1.0), roughness=0.45)
+    wood = solid_material("ShrubWood", (0.060, 0.031, 0.017, 1.0), roughness=0.94)
+    leaf = solid_material("ShrubLeaves", (0.025, 0.082, 0.024, 1.0), roughness=0.88)
+    berry = solid_material("ShrubBerries", (0.070, 0.009, 0.015, 1.0), roughness=0.62)
     leaf_verts, leaf_faces = [], []
-    for n in range(21):
-        a, r = rng.random() * math.tau, rng.uniform(0.02, 0.65)
-        root = Vector((math.cos(a) * r, math.sin(a) * r, 0))
-        top = root + Vector((math.cos(a) * rng.uniform(0.22, 0.62), math.sin(a) * rng.uniform(0.22, 0.62), rng.uniform(0.35, 0.82)))
-        branch = add_cone_between(root, top, 0.025, 0.006, sides=8); branch.data.materials.append(wood)
-        for b in range(3):
-            q = root.lerp(top, 0.38 + b * 0.22)
+    for n in range(13):
+        a = n * GOLDEN_ANGLE + rng.uniform(-0.24, 0.24)
+        root_radius = rng.uniform(0.015, 0.26)
+        root = Vector((math.cos(a) * root_radius, math.sin(a) * root_radius, 0))
+        outward = Vector((math.cos(a), math.sin(a), 0))
+        side = Vector((-math.sin(a), math.cos(a), 0))
+        height = rng.uniform(0.48, 0.98)
+        shoulder = root + outward * rng.uniform(0.08, 0.20) + side * rng.uniform(-0.08, 0.08) + Vector((0, 0, height * 0.38))
+        tip = root + outward * rng.uniform(0.28, 0.66) + side * rng.uniform(-0.14, 0.14) + Vector((0, 0, height))
+        first = add_cone_between(root, shoulder, rng.uniform(0.014, 0.025), 0.010, sides=8); first.data.materials.append(wood)
+        second = add_cone_between(shoulder, tip, 0.010, 0.0035, sides=8); second.data.materials.append(wood)
+
+        for twig_index in range(4):
+            t = 0.36 + twig_index * 0.16 + rng.uniform(-0.030, 0.030)
+            twig_root = shoulder.lerp(tip, t)
+            alternating = -1.0 if (twig_index + n) % 2 else 1.0
+            twig_direction = (outward * rng.uniform(0.25, 0.62) + side * alternating * rng.uniform(0.55, 0.92) + Vector((0, 0, rng.uniform(0.12, 0.38)))).normalized()
+            twig_length = rng.uniform(0.17, 0.34)
+            twig_tip = twig_root + twig_direction * twig_length
+            twig = add_cone_between(twig_root, twig_tip, 0.006, 0.0015, sides=7); twig.data.materials.append(wood)
             for leaf_index in range(5):
-                leaf_angle = a + leaf_index * GOLDEN_ANGLE + rng.uniform(-0.2, 0.2)
-                leaf_direction = Vector((math.cos(leaf_angle), math.sin(leaf_angle), rng.uniform(-0.08, 0.28))).normalized()
-                add_leaf_blade(leaf_verts, leaf_faces, q + Vector((rng.uniform(-0.08, 0.08), rng.uniform(-0.08, 0.08), 0.02)),
-                               leaf_direction, rng.uniform(0.12, 0.22), rng.uniform(0.035, 0.065))
-        if n % 4 == 0:
-            fruit = add_profiled_form(f"DimpledBerry{n}", top,
-                [(-0.042, 0.008), (-0.031, 0.031), (0.0, 0.043), (0.029, 0.034), (0.040, 0.009)],
-                24, berry, radial_noise=0.025, phase=a)
-            for sepal in range(5):
-                sa = sepal / 5 * math.tau
-                calyx = add_cone_between(top + Vector((0, 0, 0.034)), top + Vector((math.cos(sa) * 0.028, math.sin(sa) * 0.028, 0.052)), 0.006, 0.001, sides=5)
-                calyx.name = f"BerryCalyx{n}_{sepal}"; calyx.data.materials.append(leaf)
+                lt = 0.12 + leaf_index * 0.19
+                q = twig_root.lerp(twig_tip, lt)
+                leaf_side = -1.0 if leaf_index % 2 else 1.0
+                leaf_direction = (twig_direction * 0.34 + side * alternating * leaf_side + Vector((0, 0, rng.uniform(-0.10, 0.18)))).normalized()
+                add_leaf_blade(leaf_verts, leaf_faces, q, leaf_direction,
+                               rng.uniform(0.090, 0.155), rng.uniform(0.028, 0.046))
+
+            # Sparse, small fruit clusters sit below leaves instead of one
+            # oversized sphere floating at every cane tip.
+            if (n + twig_index) % 7 == 0:
+                for fruit_index in range(2 + (n % 2)):
+                    fruit_center = twig_tip + side * (fruit_index - 0.5) * 0.025 + Vector((0, 0, -0.025 - fruit_index * 0.012))
+                    fruit_radius = rng.uniform(0.018, 0.025)
+                    add_profiled_form(f"DimpledBerry{n}_{twig_index}_{fruit_index}", fruit_center,
+                        [(-fruit_radius, fruit_radius * 0.18), (-fruit_radius * 0.72, fruit_radius * 0.78),
+                         (0.0, fruit_radius), (fruit_radius * 0.72, fruit_radius * 0.76), (fruit_radius, fruit_radius * 0.15)],
+                        14, berry, radial_noise=0.035, phase=a + fruit_index)
     leaf_mesh = bpy.data.meshes.new("IndividualShrubLeaves"); leaf_mesh.from_pydata(leaf_verts, [], leaf_faces); leaf_mesh.materials.append(leaf)
     for polygon in leaf_mesh.polygons: polygon.use_smooth = True
     leaf_object = bpy.data.objects.new("IndividualShrubLeaves", leaf_mesh); bpy.context.collection.objects.link(leaf_object)

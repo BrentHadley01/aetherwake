@@ -107,7 +107,10 @@ void emitVertex(float x, float z, float step) {
     // Moisture-driven ground tint: mossy green only in wet basins, warm
     // leaf-litter loam on exposed ground so the floor reads forest, not lawn.
     const float moisture = fbm(x * 0.013F + 5.0F, z * 0.013F + 5.0F, 3);
-    glColor3f(0.44F + 0.16F * (1.0F - moisture), 0.40F + 0.24F * moisture, 0.28F + 0.06F * moisture);
+    // Keep the photoscan near its calibrated albedo. The old half-strength
+    // tint flattened stones, needles, and soil into one tan value after tone
+    // mapping. This restrained multiplier only nudges wet basins cooler.
+    glColor3f(0.92F + 0.08F * (1.0F - moisture), 0.88F + 0.10F * moisture, 0.82F + 0.08F * moisture);
     glVertex3f(x, y, z);
 }
 }
@@ -171,9 +174,9 @@ void WorldStreamer::update(float playerX, float playerZ) {
                 chunk.grassList = glGenLists(1);
                 glNewList(chunk.grassList, GL_COMPILE);
                 glBegin(GL_QUADS);
-                // Curved near blades use three connected ribbon sections.
-                // Mid-distance blades collapse to one tapered quad, retaining
-                // the silhouette while keeping the streamed field affordable.
+                // Near blades use two connected ribbon sections so their
+                // profile bends naturally instead of reading as straight
+                // stakes. Counts are balanced to keep the same quad budget.
                 const int clumps = lod == 0 ? 6400 : 2400;
                 const float tallBias = lod == 0 ? 0.0F : 0.22F;
                 const float widthScale = lod == 0 ? 0.82F : 1.5F;
@@ -192,10 +195,7 @@ void WorldStreamer::update(float playerX, float playerZ) {
                     if (clumpY < waterLevel + 0.8F) continue;
                     const float rise = std::abs(heightAt(clumpX + 1.6F, clumpZ) - clumpY) + std::abs(heightAt(clumpX, clumpZ + 1.6F) - clumpY);
                     if (rise / 3.2F > 0.55F) continue;                     // cliffs and scree stay bare
-            // More, finer blades read as a continuous sward without
-            // increasing the near-field quad budget: near blades use
-            // single tapered ribbons instead of three broad strips.
-                    const int blades = (lod == 0 ? 14 : 5) + static_cast<int>(grassUnit() * (lod == 0 ? 10.8F : 4.4F));
+                    const int blades = (lod == 0 ? 8 : 5) + static_cast<int>(grassUnit() * (lod == 0 ? 5.8F : 4.4F));
                     for (int blade = 0; blade < blades; ++blade) {
                         const float bx = clumpX + (grassUnit() - 0.5F) * 0.8F, bz = clumpZ + (grassUnit() - 0.5F) * 0.8F;
                         // Blades reuse the clump height (sunk slightly) so the
@@ -226,7 +226,7 @@ void WorldStreamer::update(float playerX, float playerZ) {
                             tipR += (0.155F - tipR) * dryMix; tipG += (0.135F - tipG) * dryMix; tipB += (0.048F - tipB) * dryMix;
                         }
                         const float flexibility = seedHead ? 0.58F : broadBlade ? 0.72F : 1.0F;
-                        const int sections = 1;
+                        const int sections = lod == 0 ? 2 : 1;
                         // The ribbon normal follows its resting bend plane,
                         // producing a highlight that rolls across the field.
                         const float normalLength = std::sqrt(tall * tall + lean * lean);
@@ -251,6 +251,42 @@ void WorldStreamer::update(float playerX, float playerZ) {
                             emitBladeEdge(t0, -1.0F); emitBladeEdge(t0, 1.0F);
                             emitBladeEdge(t1, 1.0F); emitBladeEdge(t1, -1.0F);
                         }
+                    }
+                }
+                // A dense, baked-in forest-floor layer costs no additional
+                // draw calls. Flexibility < 0 marks leaves and twigs as rigid
+                // debris in the shader, while ordinary grass remains wind-lit.
+                const int debrisPatches = lod == 0 ? 1150 : 360;
+                for (int patchIndex = 0; patchIndex < debrisPatches; ++patchIndex) {
+                    const float px = originX + grassUnit() * chunkSize;
+                    const float pz = originZ + grassUnit() * chunkSize;
+                    const float py = heightAt(px, pz);
+                    if (py < waterLevel + 0.35F) continue;
+                    const float forest = fbm(px * 0.009F + 5.0F, pz * 0.009F + 5.0F, 3);
+                    const float moisture = fbm(px * 0.013F + 5.0F, pz * 0.013F + 5.0F, 3);
+                    if (grassUnit() > 0.36F + forest * 0.58F) continue;
+                    const int pieces = 2 + static_cast<int>(grassUnit() * 3.0F);
+                    for (int piece = 0; piece < pieces; ++piece) {
+                        const float cx = px + (grassUnit() - 0.5F) * 1.15F;
+                        const float cz = pz + (grassUnit() - 0.5F) * 1.15F;
+                        const float angle = grassUnit() * 6.2831853F;
+                        const float dx = std::cos(angle), dz = std::sin(angle);
+                        const float sx = -dz, sz = dx;
+                        const bool twig = grassUnit() < 0.28F;
+                        const float length = twig ? 0.18F + grassUnit() * 0.42F : 0.07F + grassUnit() * 0.12F;
+                        const float width = twig ? 0.008F + grassUnit() * 0.012F : length * (0.22F + grassUnit() * 0.14F);
+                        const float age = grassUnit();
+                        const float wetDarkening = 1.0F - moisture * 0.22F;
+                        if (twig) glColor3f(0.075F * wetDarkening, 0.043F * wetDarkening, 0.021F * wetDarkening);
+                        else if (age < 0.30F) glColor3f(0.14F * wetDarkening, 0.053F * wetDarkening, 0.018F);
+                        else if (age < 0.72F) glColor3f(0.095F * wetDarkening, 0.049F * wetDarkening, 0.018F);
+                        else glColor3f(0.052F * wetDarkening, 0.037F * wetDarkening, 0.018F);
+                        glNormal3f(0.0F, 1.0F, 0.0F);
+                        glTexCoord2f(0.0F, -1.0F);
+                        glVertex3f(cx - dx * length * 0.5F - sx * width, py + 0.035F, cz - dz * length * 0.5F - sz * width);
+                        glVertex3f(cx - dx * length * 0.5F + sx * width, py + 0.037F, cz - dz * length * 0.5F + sz * width);
+                        glVertex3f(cx + dx * length * 0.5F + sx * width * (twig ? 1.0F : 0.28F), py + 0.041F, cz + dz * length * 0.5F + sz * width * (twig ? 1.0F : 0.28F));
+                        glVertex3f(cx + dx * length * 0.5F - sx * width * (twig ? 1.0F : 0.28F), py + 0.039F, cz + dz * length * 0.5F - sz * width * (twig ? 1.0F : 0.28F));
                     }
                 }
                 glEnd();
