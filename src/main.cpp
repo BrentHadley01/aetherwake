@@ -634,15 +634,21 @@ int main() {
         const CycleState cycle = computeCycle(dayTime);
 
         // Depth-only sun/moon pass into the shadow FBO, before the main view.
-        // Refreshed every frame so the shadow light tracks the moving sun
-        // smoothly; the shader's normal-offset lookup and wide penumbra keep
-        // sub-texel motion from sparkling on thin foliage.
+        // Time-sliced shadow sun: the shadow light advances in 0.1-degree
+        // steps (about every 1.2 s at the 72-minute day). Each step shifts a
+        // 40 m shadow edge ~7 cm - dissolved inside the ~55 cm soft penumbra
+        // - and BETWEEN steps the map is bit-identical and never re-rendered,
+        // so edges cannot boil. Visible shading still uses the smooth sun.
         static float lightMatrix[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         static bool shadowActive = false;
+        static int lastShadowStep = -1;
+        static float lastSnapX = 1.0e9F, lastSnapY = 1.0e9F;
         if (shadowReady && worldShader.valid()) {
+            const int shadowStep = static_cast<int>(dayTime * 3600.0F);
+            const CycleState shadowCycle = computeCycle((static_cast<float>(shadowStep) + 0.5F) / 3600.0F);
             // Keep the shadow light off the horizon: near-horizontal shadows
             // stretch one texel across metres of ground and shimmer badly.
-            float dirX = cycle.lightDir[0], dirY = std::max(cycle.lightDir[1], 0.18F), dirZ = cycle.lightDir[2];
+            float dirX = shadowCycle.lightDir[0], dirY = std::max(shadowCycle.lightDir[1], 0.18F), dirZ = shadowCycle.lightDir[2];
             const float dirLength = std::sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
             dirX /= dirLength; dirY /= dirLength; dirZ /= dirLength;
             const float focusX = heroX, focusZ = heroZ;
@@ -657,6 +663,14 @@ int main() {
             const float texelWorld = 2.0F * 140.0F / shadowSize;
             lightView[12] = std::round(lightView[12] / texelWorld) * texelWorld;
             lightView[13] = std::round(lightView[13] / texelWorld) * texelWorld;
+            const bool moved = std::abs(lightView[12] - lastSnapX) > 1.0e-4F || std::abs(lightView[13] - lastSnapY) > 1.0e-4F;
+            const bool stepChanged = shadowStep != lastShadowStep;
+            // While moving, cap map refreshes at every other frame; the stale
+            // map stays self-consistent with its matrix, the window just
+            // trails the player by a fraction of a metre.
+            const bool throttled = moved && !stepChanged && shadowActive && frame % 2 == 0;
+            if ((!shadowActive || stepChanged || moved) && !throttled) {
+            lastShadowStep = shadowStep; lastSnapX = lightView[12]; lastSnapY = lightView[13];
             buildOrtho(140.0F, 140.0F, 60.0F, 800.0F, lightProj);
             bindFramebuffer(GL_FRAMEBUFFER, shadowFbo);
             glViewport(0, 0, shadowSize, shadowSize); glClear(GL_DEPTH_BUFFER_BIT);
@@ -679,6 +693,7 @@ int main() {
             const float bias[16] = {0.5F, 0, 0, 0, 0, 0.5F, 0, 0, 0, 0, 0.5F, 0, 0.5F, 0.5F, 0.5F, 1};
             mul4(bias, projTimesView, lightMatrix);
             shadowActive = true;
+            }
         }
 
         char title[340]; std::snprintf(title, sizeof(title), "Aetherwake | %s | Warden %d | %d chunks | WASD move, mouse look, wheel camera, Shift sprint, Space cast | %s", magic.find(spells[selected])->displayName.c_str(), warden.health, streamedWorld.loadedChunkCount(), worldShader.status().c_str()); SDL_SetWindowTitle(window, title);
