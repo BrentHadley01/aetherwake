@@ -189,7 +189,8 @@ void WorldStreamer::update(float playerX, float playerZ) {
                     // Meadows carry the densest carpet, forest floor stays
                     // moderate, dry exposed ground goes patchy.
                     float density = 0.50F + 0.48F * moisture;
-                    if (forest < 0.42F) density = std::min(1.0F, density * 1.3F);
+                    if (forest > 0.52F) density *= 0.30F; // shaded forest is litter/fern dominated, not lawn
+                    else if (forest < 0.42F) density = std::min(1.0F, density * 1.3F);
                     if (grassUnit() > density) continue;
                     const float clumpY = heightAt(clumpX, clumpZ);
                     if (clumpY < waterLevel + 0.8F) continue;
@@ -304,7 +305,10 @@ void WorldStreamer::update(float playerX, float playerZ) {
                 // 16 clover, 17 sedge, 18 dry grass, 19 litter, 20 pebbles,
                 // 21 lupine, 22 moss mat, 23 slab, 24 outcrop, 25 stump,
                 // 26 branch pile; 39 spruce sapling, 40 wood sorrel,
-                // 41 fireweed, 42 wood anemone (27-38 are tree render LODs).
+                // 41 fireweed, 42 wood anemone; 43-48 scanned moss rocks,
+                // 49 scanned stump, 50 scanned fern, 51 scanned dead trunk,
+                // 52 decimated photoreal hero fir
+                // (27-38 are tree render LODs).
                 for (int attempt = 0; attempt < 104; ++attempt) {
                     const float px = originX + nextUnit() * chunkSize, pz = originZ + nextUnit() * chunkSize;
                     const float py = heightAt(px, pz);
@@ -358,6 +362,29 @@ void WorldStreamer::update(float playerX, float playerZ) {
                         chunk.details.push_back({px + nextUnit() * 2.0F - 1.0F, py - 0.03F, pz + nextUnit() * 2.0F - 1.0F, 0.65F + nextUnit() * 0.75F, nextUnit() * 360.0F, 25});
                     if (forested && slope < 0.30F && nextUnit() < 0.028F)
                         chunk.details.push_back({px + nextUnit() * 2.6F - 1.3F, py - 0.04F, pz + nextUnit() * 2.6F - 1.3F, 0.72F + nextUnit() * 0.55F, nextUnit() * 360.0F, 39});
+                    // Wet old-growth strata overlap: scanned stone, deadwood,
+                    // saplings, and fern colonies are independent ecological
+                    // layers rather than one mutually-exclusive prop choice.
+                    if (forested && moisture > 0.50F && slope < 0.34F) {
+                        if (nextUnit() < 0.038F) {
+                            const int scannedRock = 43 + static_cast<int>(nextUnit() * 5.999F);
+                            chunk.details.push_back({px + (nextUnit() - 0.5F) * 3.6F, py - 0.18F, pz + (nextUnit() - 0.5F) * 3.6F,
+                                                     0.32F + nextUnit() * 0.48F, nextUnit() * 360.0F, scannedRock});
+                        }
+                        if (nextUnit() < 0.014F)
+                            chunk.details.push_back({px, py - 0.10F, pz, 0.62F + nextUnit() * 0.55F, nextUnit() * 360.0F, 49});
+                        if (nextUnit() < 0.15F)
+                            chunk.details.push_back({px + (nextUnit() - 0.5F) * 2.4F, py - 0.03F, pz + (nextUnit() - 0.5F) * 2.4F,
+                                                     0.56F + nextUnit() * 0.70F, nextUnit() * 360.0F, 50});
+                        if (nextUnit() < 0.018F)
+                            chunk.details.push_back({px, py - 0.10F, pz, 0.52F + nextUnit() * 0.50F, nextUnit() * 360.0F, 51});
+                        if (nextUnit() < 0.0025F)
+                            chunk.details.push_back({px, py - 0.20F, pz, 0.72F + nextUnit() * 0.36F, nextUnit() * 360.0F, 52});
+                        if (nextUnit() < 0.07F)
+                            chunk.details.push_back({px, py - 0.04F, pz, 0.62F + nextUnit() * 0.72F, nextUnit() * 360.0F, nextUnit() < 0.55F ? 5 : 26});
+                        if (nextUnit() < 0.08F)
+                            chunk.details.push_back({px, py - 0.04F, pz, 0.60F + nextUnit() * 0.60F, nextUnit() * 360.0F, 39});
+                    }
                     // A second, independent ground-layer decision creates
                     // overlapping ecological strata instead of one prop per
                     // sample. Each GLB is already a dense natural cluster.
@@ -439,9 +466,9 @@ void WorldStreamer::resolveCollision(float& x, float& z, float radius) const {
         if (it == chunks_.end()) continue;
         for (const DetailInstance& instance : it->second.details) {
             float colliderRadius;
-            if (instance.type <= 2 || instance.type == 14) colliderRadius = 0.38F * instance.scale; // tree/snag trunks
-            else if (instance.type == 3 || instance.type == 23 || instance.type == 24) colliderRadius = 1.30F * instance.scale;
-            else if (instance.type == 25) colliderRadius = 0.55F * instance.scale;
+            if (instance.type <= 2 || instance.type == 14 || instance.type == 52) colliderRadius = 0.38F * instance.scale; // tree/snag trunks
+            else if (instance.type == 3 || instance.type == 23 || instance.type == 24 || (instance.type >= 43 && instance.type <= 48)) colliderRadius = 1.30F * instance.scale;
+            else if (instance.type == 25 || instance.type == 49 || instance.type == 51) colliderRadius = 0.55F * instance.scale;
             else continue;                                                          // understory is walkable
             const float offsetX = x - instance.x, offsetZ = z - instance.z;
             const float distanceSquared = offsetX * offsetX + offsetZ * offsetZ;
@@ -465,18 +492,20 @@ void WorldStreamer::drawDetails(const unsigned int* lists, int listCount, float 
         for (const DetailInstance& instance : it->second.details) {
             const float cameraDx = instance.x - excludeX, cameraDz = instance.z - excludeZ;
             const float distanceSquared = cameraDx * cameraDx + cameraDz * cameraDz;
-            const bool tree = instance.type <= 2 || instance.type == 14;
-            const bool microCover = (instance.type >= 16 && instance.type <= 22) || instance.type >= 40;
+            const bool heroTree = instance.type == 52;
+            const bool tree = instance.type <= 2 || instance.type == 14 || heroTree;
+            const bool microCover = (instance.type >= 16 && instance.type <= 22) || (instance.type >= 40 && instance.type <= 42);
+            const bool scannedUnderstory = instance.type == 50;
             const bool youngTree = instance.type == 39;
-            const bool largeNatural = instance.type >= 23 && instance.type <= 26;
+            const bool largeNatural = (instance.type >= 23 && instance.type <= 26) || (instance.type >= 43 && instance.type <= 49) || instance.type == 51;
             const bool shadowPass = viewForwardX == 0.0F && viewForwardZ == 0.0F;
-            if (shadowPass && microCover) continue; // micro-cover is sub-pixel in the shadow map
+            if (shadowPass && (microCover || scannedUnderstory)) continue; // ground cover is sub-pixel in the shadow map
             if (excludeRadius > 0.0F && distanceSquared < excludeRadius * excludeRadius && tree) continue;
             if (maxDistance > 0.0F) {
                 // Small props vanish into fog/grass long before the large tree
                 // silhouettes do. This is a visibility budget, not a quality
                 // reduction for anything the player can resolve.
-                const float typeDistance = tree ? maxDistance : youngTree ? maxDistance * 0.22F : (instance.type <= 5 || largeNatural) ? maxDistance * 0.52F : microCover ? maxDistance * 0.07F : maxDistance * 0.30F;
+                const float typeDistance = heroTree ? maxDistance * 0.48F : tree ? maxDistance : youngTree ? maxDistance * 0.22F : (instance.type <= 5 || largeNatural) ? maxDistance * 0.52F : scannedUnderstory ? maxDistance * 0.15F : microCover ? maxDistance * 0.07F : maxDistance * 0.30F;
                 if (distanceSquared > typeDistance * typeDistance) continue;
                 // The render back-end still clips off-screen geometry, but it
                 // has already paid to submit it. Cull the rear hemisphere on
@@ -488,6 +517,8 @@ void WorldStreamer::drawDetails(const unsigned int* lists, int listCount, float 
                 }
             }
             int resolvedType = instance.type;
+            if (shadowPass && heroTree && listCount >= 29)
+                resolvedType = 28; // stable lightweight spruce crown for the hero fir's shadow
             // Full branch and needle geometry is only distinguishable nearby.
             // The far assets were authored from the same generator and retain
             // the silhouette, so this is perceptual LOD rather than a visual

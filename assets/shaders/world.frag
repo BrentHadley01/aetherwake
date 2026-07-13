@@ -279,11 +279,22 @@ void main() {
     vec3 halfVector = normalize(lightDirection + viewDirection);
     float diffuse = max(dot(normal, lightDirection), 0.0) * shadow;
     float specular = pow(max(dot(normal, halfVector), 0.0), shininess) * specularStrength * shadow;
-    vec3 skyBounce = uAmbient * 0.55 * max(normal.y, 0.0);
-    vec3 directLight = uLightColor * diffuse;
+    // Broad canopy attenuation lets dense wet cells feel sheltered without
+    // rendering a second screen-space occlusion pass. It follows the same
+    // world-space scale as the CPU forest field and remains camera-stable.
+    vec2 canopyUv = vWorld.xz * 0.009 + vec2(5.0);
+    float canopyField = valueNoise(canopyUv) * 0.67 + valueNoise(canopyUv * 2.03 + vec2(19.19, -7.31)) * 0.33;
+    float canopy = smoothstep(0.48, 0.70, canopyField) * (uMode == 4 ? 0.0 : 1.0);
+    float ambientShelter = mix(1.0, 0.46, canopy);
+    float directShelter = mix(1.0, 0.30, canopy);
+    vec3 skyBounce = uAmbient * 0.55 * max(normal.y, 0.0) * ambientShelter;
+    vec3 directLight = uLightColor * diffuse * directShelter;
     vec3 specularColor = mix(vec3(1.0), max(albedo, vec3(0.025)), materialMetallic);
-    vec3 color = albedo * (uAmbient + skyBounce + directLight) * (1.0 - materialMetallic * 0.72) * surfaceOcclusion
+    vec3 color = albedo * (uAmbient * ambientShelter + skyBounce + directLight) * (1.0 - materialMetallic * 0.72) * surfaceOcclusion
                + specular * specularColor * uLightColor;
+    // Bark and stone retain small wet highlights beneath the cool canopy.
+    if (materialClass > 0.5 && materialClass < 2.5)
+        color += specularColor * uLightColor * canopy * pow(max(dot(normal, halfVector), 0.0), 38.0) * 0.045;
     // Thin leaves and needles transmit light from behind. This keeps conifer
     // boughs dimensional instead of collapsing into black cut-outs.
     float transmission = max(dot(-normal, lightDirection), 0.0) * foliageMask;
@@ -318,6 +329,7 @@ void main() {
     }
 
     float density = 0.00165;
+    density += canopy * 0.00165; // humid air and occluded depth under old growth
     float basinHaze = exp(-max(vWorld.y - uEye.y + 9.0, 0.0) * 0.055);
     if (uMode == 1 || uMode == 3) density += 0.00125 * basinHaze;
     float fog = 1.0 - exp(-distanceFromCamera * density);
