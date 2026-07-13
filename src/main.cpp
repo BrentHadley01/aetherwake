@@ -681,8 +681,10 @@ int main() {
     bool running = true, won = false; Uint64 previous = SDL_GetTicks(); int frame = 0; float elapsed = 0.0F; Uint64 steadyStart = 0;
     // 0 = first person at the Wayfinder's eye; larger values form the
     // collision-safe third-person camera boom.
-    float cameraDistance = 20.0F;
-    float cameraElevation = 18.0F;
+    // A shoulder-height chase view: close enough to read the character and
+    // low enough that the world stays on the horizon rather than beneath it.
+    float cameraDistance = 13.0F;
+    float cameraElevation = 9.0F;
     float firstPersonPitch = 0.0F;
     if (const char* distance = std::getenv("AETHERWAKE_CAMERA_DISTANCE")) cameraDistance = std::clamp(static_cast<float>(std::atof(distance)), 0.0F, 30.0F);
 
@@ -891,10 +893,13 @@ int main() {
         glMatrixMode(GL_PROJECTION); glLoadIdentity(); perspective(56.0F, static_cast<float>(width) / height, 0.2F, 3000.0F); glMatrixMode(GL_MODELVIEW); glLoadIdentity();
 
         const float orbit = cameraDistance;
+        constexpr float thirdPersonCameraHeight = 1.70F;
+        constexpr float thirdPersonTargetHeight = 1.55F;
+        constexpr float thirdPersonFocusAhead = 5.0F;
         const float elevationRadians = cameraElevation * 0.017453293F;
         const float horizontalOrbit = orbit * std::cos(elevationRadians);
         float eyeX = heroX - forwardX * horizontalOrbit, eyeZ = heroZ - forwardZ * horizontalOrbit;
-        float eyeY = heroY + 2.35F + orbit * std::sin(elevationRadians);
+        float eyeY = heroY + thirdPersonCameraHeight + orbit * std::sin(elevationRadians);
         // Keep the whole camera boom above the terrain so ridges never swallow the view.
         for (int sample = 0; sample <= 6; ++sample) {
             const float t = static_cast<float>(sample) / 6.0F;
@@ -910,7 +915,7 @@ int main() {
             const float pitchRadians = firstPersonPitch * 0.017453293F;
             const float lookDistance = 6.0F, horizontalLook = std::cos(pitchRadians) * lookDistance;
             buildView(eyeX, eyeY, eyeZ, eyeX + forwardX * horizontalLook, eyeY + std::sin(pitchRadians) * lookDistance, eyeZ + forwardZ * horizontalLook, viewMatrix, inverseView);
-        } else buildView(eyeX, eyeY, eyeZ, heroX + forwardX * 6.0F, heroY + 2.4F, heroZ + forwardZ * 6.0F, viewMatrix, inverseView);
+        } else buildView(eyeX, eyeY, eyeZ, heroX + forwardX * thirdPersonFocusAhead, heroY + thirdPersonTargetHeight, heroZ + forwardZ * thirdPersonFocusAhead, viewMatrix, inverseView);
         glMultMatrixf(viewMatrix);
 
         // The reticle is the terrain-magic cursor. Ray-march from the camera
@@ -922,9 +927,9 @@ int main() {
                 const float pitch = firstPersonPitch * 0.017453293F;
                 rayX = forwardX * std::cos(pitch); rayY = std::sin(pitch); rayZ = forwardZ * std::cos(pitch);
             } else {
-                rayX = heroX + forwardX * 6.0F - eyeX;
-                rayY = heroY + 2.4F - eyeY;
-                rayZ = heroZ + forwardZ * 6.0F - eyeZ;
+                rayX = heroX + forwardX * thirdPersonFocusAhead - eyeX;
+                rayY = heroY + thirdPersonTargetHeight - eyeY;
+                rayZ = heroZ + forwardZ * thirdPersonFocusAhead - eyeZ;
                 const float length = std::sqrt(rayX * rayX + rayY * rayY + rayZ * rayZ);
                 rayX /= length; rayY /= length; rayZ /= length;
             }
