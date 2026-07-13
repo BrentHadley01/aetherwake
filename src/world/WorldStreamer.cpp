@@ -83,8 +83,9 @@ void WorldStreamer::deformTerrain(float x, float z, float brushRadius, float str
     for (int cz = minZ; cz <= maxZ; ++cz) for (int cx = minX; cx <= maxX; ++cx) {
         const auto it = chunks_.find(chunkKey(cx, cz));
         if (it == chunks_.end()) continue;
-        if (it->second.list) glDeleteLists(it->second.list, 1);
-        it->second.list = 0; it->second.terrainDirty = true;
+        // Keep the current mesh visible until update() has fully compiled its
+        // replacement. Deleting here exposes a one-frame hole through the world.
+        it->second.terrainDirty = true;
     }
 }
 
@@ -123,16 +124,16 @@ void WorldStreamer::update(float playerX, float playerZ) {
         const int lod = ring <= 1 ? 0 : ring <= 3 ? 1 : ring <= 7 ? 2 : 3;
         const std::uint64_t key = chunkKey(cx, cz);
         Chunk& chunk = chunks_[key];
-        if ((chunk.list == 0 || chunk.lod != lod) && builds < buildBudget) {
+        if ((chunk.list == 0 || chunk.lod != lod || chunk.terrainDirty) && builds < buildBudget) {
             ++builds;
             const bool preserveGrass = chunk.terrainDirty && chunk.lod == lod && chunk.grassList != 0;
-            if (chunk.list) glDeleteLists(chunk.list, 1);
+            const unsigned int previousTerrainList = chunk.list;
             if (chunk.grassList && !preserveGrass) { glDeleteLists(chunk.grassList, 1); chunk.grassList = 0; }
             const int resolution = lod == 0 ? 48 : lod == 1 ? 20 : lod == 2 ? 10 : 5;
-            chunk.list = glGenLists(1); chunk.lod = lod;
+            const unsigned int rebuiltTerrainList = glGenLists(1);
             const float originX = cx * chunkSize, originZ = cz * chunkSize;
             const float step = chunkSize / resolution;
-            glNewList(chunk.list, GL_COMPILE);
+            glNewList(rebuiltTerrainList, GL_COMPILE);
             glBegin(GL_TRIANGLES);
             for (int z = 0; z < resolution; ++z) for (int x = 0; x < resolution; ++x) {
                 const float x0 = originX + x * step, x1 = x0 + step, z0 = originZ + z * step, z1 = z0 + step;
@@ -157,6 +158,10 @@ void WorldStreamer::update(float playerX, float playerZ) {
             }
             glEnd();
             glEndList();
+            // Atomic from the renderer's point of view: the previous list
+            // remains valid throughout compilation, then is replaced here.
+            chunk.list = rebuiltTerrainList; chunk.lod = lod;
+            if (previousTerrainList) glDeleteLists(previousTerrainList, 1);
             // Swaying grass carpet; texcoord.x carries the sway weight so the
             // vertex shader can bend the tips. The near ring is a dense carpet,
             // the mid rings a sparser, taller stand that reads at distance.
