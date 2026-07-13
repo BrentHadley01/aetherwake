@@ -618,7 +618,15 @@ int main() {
             if (spec) { dayTime = std::clamp(static_cast<float>(std::atof(spec)), 0.0F, 1.0F); dayTimeFixed = true; }
             else dayTime = 0.0F;
         }
-        if (!dayTimeFixed) { dayTime += dt / 720.0F + (keys[SDL_SCANCODE_T] ? dt / 18.0F : 0.0F); dayTime -= std::floor(dayTime); }
+        // A 48-minute day keeps sun/shadow drift below the speed the eye
+        // tracks (Skyrim: 72 min, Witcher 3: ~96 min); a fast cycle makes
+        // every shadow edge visibly slide. AETHERWAKE_DAYSECONDS overrides.
+        static float daySeconds = -1.0F;
+        if (daySeconds < 0.0F) {
+            const char* spec = std::getenv("AETHERWAKE_DAYSECONDS");
+            daySeconds = spec ? std::max(60.0F, static_cast<float>(std::atof(spec))) : 2880.0F;
+        }
+        if (!dayTimeFixed) { dayTime += dt / daySeconds + (keys[SDL_SCANCODE_T] ? dt / 18.0F : 0.0F); dayTime -= std::floor(dayTime); }
         const CycleState cycle = computeCycle(dayTime);
 
         // Depth-only sun/moon pass into the shadow FBO, before the main view.
