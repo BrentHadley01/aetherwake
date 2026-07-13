@@ -179,14 +179,16 @@ void main() {
         // otherwise sparkles as the sun moves.
         vec4 shadowCoord = uLight * vec4(vWorld + normal * 0.30, 1.0);
         if (shadowCoord.x > 0.003 && shadowCoord.x < 0.997 && shadowCoord.y > 0.003 && shadowCoord.y < 0.997) {
-            // 3x3 PCF over a wide footprint: the soft penumbra turns the
-            // sub-texel crawl of a continuously moving sun into a smooth fade.
-            vec2 texel = vec2(1.0 / 2048.0) * 2.0;
+            // 4x4 PCF at one-texel spacing: with hardware bilinear each tap
+            // covers a texel, so the footprint is CONTIGUOUS (no comb gaps)
+            // and the penumbra is a smooth fade that absorbs the sub-texel
+            // crawl of the continuously moving sun.
+            vec2 texel = vec2(1.0 / 2048.0);
             shadow = 0.0;
-            for (int sy = -1; sy <= 1; ++sy)
-                for (int sx = -1; sx <= 1; ++sx)
-                    shadow += shadow2D(uShadow, shadowCoord.xyz + vec3(float(sx) * texel.x, float(sy) * texel.y, 0.0)).r;
-            shadow *= 0.111111;
+            for (int sy = 0; sy < 4; ++sy)
+                for (int sx = 0; sx < 4; ++sx)
+                    shadow += shadow2D(uShadow, shadowCoord.xyz + vec3((float(sx) - 1.5) * texel.x, (float(sy) - 1.5) * texel.y, 0.0)).r;
+            shadow *= 0.0625;
             // Needle geometry half-shadows itself no matter the bias; lighten
             // its self-shadow term instead of letting it flicker.
             shadow = mix(shadow, min(1.0, shadow + 0.45), foliageMask * 0.55);

@@ -10,6 +10,7 @@ varying vec3 vViewPosition;
 varying vec2 vUv;
 varying vec4 vTint;
 varying vec3 vWorld;
+varying vec3 vMaterial;
 
 void main() {
     vec4 vertex = gl_Vertex;
@@ -39,7 +40,14 @@ void main() {
     vNormal = normalize(gl_NormalMatrix * gl_Normal);
     vUv = gl_MultiTexCoord0.xy;
     vTint = gl_Color;
+    vMaterial = gl_MultiTexCoord1.xyz;
     // Reconstruct true world space so node-local GLB meshes fog and shadow correctly.
     vWorld = (uInverseView * viewPosition).xyz;
+    // Grass shades from its STABLE pre-sway position (blades are emitted in
+    // world space, so gl_Vertex is world space). Animated vertices sampling
+    // the shadow map at their displaced positions strobe light/dark whenever
+    // a blade sways across a shadow edge; anchoring to the root keeps each
+    // blade's shadowing constant while it moves.
+    if (uMode == 3) vWorld = gl_Vertex.xyz;
     gl_Position = gl_ProjectionMatrix * viewPosition;
 }
