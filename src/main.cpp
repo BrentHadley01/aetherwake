@@ -52,6 +52,9 @@
 #ifndef GL_TEXTURE3
 #define GL_TEXTURE3 0x84C3
 #endif
+#ifndef GL_TEXTURE4
+#define GL_TEXTURE4 0x84C4
+#endif
 
 namespace {
 using ActiveTextureFn = void (APIENTRYP)(GLenum);
@@ -498,24 +501,33 @@ int main() {
     const GLuint spellParticleTexture = buildSpellParticleTexture();
     if (activeTexture && rockTexture) { activeTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, rockTexture); glEnable(GL_TEXTURE_2D); activeTexture(GL_TEXTURE0); }
 
-    // Moonlight shadow map: depth-only FBO sampled with hardware PCF.
+    // Sun/moon shadows use TWO depth maps: the previous and next time-slice
+    // of the moving light. Both are static between updates (no edge boil) and
+    // the shader cross-fades them continuously, so shadows glide smoothly.
     constexpr int shadowSize = 2048;
-    GLuint shadowTexture = 0, shadowFbo = 0; bool shadowReady = false;
+    GLuint shadowTextures[2] = {0, 0}, shadowFbos[2] = {0, 0}; bool shadowReady = false;
     if (genFramebuffers && bindFramebuffer && framebufferTexture2D && checkFramebufferStatus && activeTexture) {
-        glGenTextures(1, &shadowTexture); glBindTexture(GL_TEXTURE_2D, shadowTexture);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, shadowSize, shadowSize, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
-        genFramebuffers(1, &shadowFbo); bindFramebuffer(GL_FRAMEBUFFER, shadowFbo);
-        framebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadowTexture, 0);
-        glDrawBuffer(GL_NONE); glReadBuffer(GL_NONE);
-        shadowReady = checkFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        shadowReady = true;
+        for (int i = 0; i < 2; ++i) {
+            glGenTextures(1, &shadowTextures[i]); glBindTexture(GL_TEXTURE_2D, shadowTextures[i]);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, shadowSize, shadowSize, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+            genFramebuffers(1, &shadowFbos[i]); bindFramebuffer(GL_FRAMEBUFFER, shadowFbos[i]);
+            framebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadowTextures[i], 0);
+            glDrawBuffer(GL_NONE); glReadBuffer(GL_NONE);
+            shadowReady = shadowReady && checkFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        }
         bindFramebuffer(GL_FRAMEBUFFER, 0);
-        if (shadowReady) { activeTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, shadowTexture); activeTexture(GL_TEXTURE0); }
+        if (shadowReady) {
+            activeTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, shadowTextures[0]);
+            activeTexture(GL_TEXTURE4); glBindTexture(GL_TEXTURE_2D, shadowTextures[0]);
+            activeTexture(GL_TEXTURE0);
+        }
     }
-    if (worldShader.valid()) { worldShader.use(); worldShader.setInt("uShadow", 2); worldShader.stop(); }
+    if (worldShader.valid()) { worldShader.use(); worldShader.setInt("uShadow", 2); worldShader.setInt("uShadowOld", 4); worldShader.stop(); }
 
     // Post-processing chain: bloom, vignette, saturation, and debanding.
     renderer::ShaderProgram postShader; postShader.load("assets/shaders/post.vert", "assets/shaders/post.frag");
@@ -633,46 +645,29 @@ int main() {
         dayTime -= std::floor(dayTime);
         const CycleState cycle = computeCycle(dayTime);
 
-        // Depth-only sun/moon pass into the shadow FBO, before the main view.
-        // Time-sliced shadow sun: the shadow light advances in 0.1-degree
-        // steps (about every 1.2 s at the 72-minute day). Each step shifts a
-        // 40 m shadow edge ~7 cm - dissolved inside the ~55 cm soft penumbra
-        // - and BETWEEN steps the map is bit-identical and never re-rendered,
-        // so edges cannot boil. Visible shading still uses the smooth sun.
-        static float lightMatrix[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        // Two immutable sun-angle snapshots are blended continuously. At a
+        // slice boundary the old "next" map becomes current and only a new
+        // future map is rendered, while its blend weight is still zero.
+        static float lightMatrices[2][16] = {
+            {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1},
+            {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
         static bool shadowActive = false;
-        static int lastShadowStep = -1;
-        static float lastSnapX = 1.0e9F, lastSnapY = 1.0e9F;
-        if (shadowReady && worldShader.valid()) {
-            const int shadowStep = static_cast<int>(dayTime * 3600.0F);
-            const CycleState shadowCycle = computeCycle((static_cast<float>(shadowStep) + 0.5F) / 3600.0F);
-            // Keep the shadow light off the horizon: near-horizontal shadows
-            // stretch one texel across metres of ground and shimmer badly.
+        static int shadowBaseStep = -1, shadowCurrent = 0, shadowNext = 1;
+        static float shadowHeroX = 1.0e9F, shadowHeroZ = 1.0e9F;
+        const auto renderShadowSnapshot = [&](int mapIndex, int angleStep) {
+            const CycleState shadowCycle = computeCycle((static_cast<float>(angleStep) + 0.5F) / 3600.0F);
             float dirX = shadowCycle.lightDir[0], dirY = std::max(shadowCycle.lightDir[1], 0.18F), dirZ = shadowCycle.lightDir[2];
             const float dirLength = std::sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
             dirX /= dirLength; dirY /= dirLength; dirZ /= dirLength;
-            const float focusX = heroX, focusZ = heroZ;
-            const float focusY = world::WorldStreamer::heightAt(focusX, focusZ);
+            const float focusY = world::WorldStreamer::heightAt(heroX, heroZ);
             float lightView[16], lightProj[16];
-            buildView(focusX + dirX * 400.0F, focusY + dirY * 400.0F, focusZ + dirZ * 400.0F, focusX, focusY, focusZ, lightView, nullptr);
-            // Texel-snap in LIGHT space: the view rows lie in the shadow map's
-            // plane, so quantizing the translation there is exact and stops
-            // shadow edges from re-rasterizing differently as the player moves.
-            // 140 m half-extent gives ~14 cm texels - finer, stabler detail
-            // than the previous 20 cm over a window the haze hides anyway.
+            buildView(heroX + dirX * 400.0F, focusY + dirY * 400.0F, heroZ + dirZ * 400.0F,
+                      heroX, focusY, heroZ, lightView, nullptr);
             const float texelWorld = 2.0F * 140.0F / shadowSize;
             lightView[12] = std::round(lightView[12] / texelWorld) * texelWorld;
             lightView[13] = std::round(lightView[13] / texelWorld) * texelWorld;
-            const bool moved = std::abs(lightView[12] - lastSnapX) > 1.0e-4F || std::abs(lightView[13] - lastSnapY) > 1.0e-4F;
-            const bool stepChanged = shadowStep != lastShadowStep;
-            // While moving, cap map refreshes at every other frame; the stale
-            // map stays self-consistent with its matrix, the window just
-            // trails the player by a fraction of a metre.
-            const bool throttled = moved && !stepChanged && shadowActive && frame % 2 == 0;
-            if ((!shadowActive || stepChanged || moved) && !throttled) {
-            lastShadowStep = shadowStep; lastSnapX = lightView[12]; lastSnapY = lightView[13];
             buildOrtho(140.0F, 140.0F, 60.0F, 800.0F, lightProj);
-            bindFramebuffer(GL_FRAMEBUFFER, shadowFbo);
+            bindFramebuffer(GL_FRAMEBUFFER, shadowFbos[mapIndex]);
             glViewport(0, 0, shadowSize, shadowSize); glClear(GL_DEPTH_BUFFER_BIT);
             glMatrixMode(GL_PROJECTION); glLoadMatrixf(lightProj);
             glMatrixMode(GL_MODELVIEW); glLoadMatrixf(lightView);
@@ -691,9 +686,37 @@ int main() {
             bindFramebuffer(GL_FRAMEBUFFER, 0);
             float projTimesView[16]; mul4(lightProj, lightView, projTimesView);
             const float bias[16] = {0.5F, 0, 0, 0, 0, 0.5F, 0, 0, 0, 0, 0.5F, 0, 0.5F, 0.5F, 0.5F, 1};
-            mul4(bias, projTimesView, lightMatrix);
-            shadowActive = true;
+            mul4(bias, projTimesView, lightMatrices[mapIndex]);
+        };
+        const float shadowPhase = dayTime * 3600.0F;
+        const int desiredShadowStep = static_cast<int>(std::floor(shadowPhase));
+        if (shadowReady && worldShader.valid()) {
+            if (!shadowActive || desiredShadowStep < shadowBaseStep || desiredShadowStep > shadowBaseStep + 1) {
+                shadowCurrent = 0; shadowNext = 1; shadowBaseStep = desiredShadowStep;
+                renderShadowSnapshot(shadowCurrent, shadowBaseStep);
+                renderShadowSnapshot(shadowNext, shadowBaseStep + 1);
+                shadowActive = true;
+                shadowHeroX = heroX; shadowHeroZ = heroZ;
+            } else if (desiredShadowStep == shadowBaseStep + 1) {
+                shadowCurrent = shadowNext; shadowNext = 1 - shadowCurrent;
+                shadowBaseStep = desiredShadowStep;
+                renderShadowSnapshot(shadowNext, shadowBaseStep + 1);
+            } else {
+                const float dx = heroX - shadowHeroX, dz = heroZ - shadowHeroZ;
+                if (dx * dx + dz * dz > 0.12F * 0.12F) {
+                    // Alternate the expensive refresh. Each snapshot remains
+                    // internally consistent and is never sampled with a stale matrix.
+                    const int movingMap = (frame & 1) ? shadowCurrent : shadowNext;
+                    renderShadowSnapshot(movingMap, shadowBaseStep + (movingMap == shadowNext ? 1 : 0));
+                    shadowHeroX = heroX; shadowHeroZ = heroZ;
+                }
             }
+        }
+        const float shadowBlend = std::clamp(shadowPhase - std::floor(shadowPhase), 0.0F, 1.0F);
+        if (shadowActive && activeTexture) {
+            activeTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, shadowTextures[shadowCurrent]);
+            activeTexture(GL_TEXTURE4); glBindTexture(GL_TEXTURE_2D, shadowTextures[shadowNext]);
+            activeTexture(GL_TEXTURE0);
         }
 
         char title[340]; std::snprintf(title, sizeof(title), "Aetherwake | %s | Warden %d | %d chunks | WASD move, mouse look, wheel camera, Shift sprint, Space cast | %s", magic.find(spells[selected])->displayName.c_str(), warden.health, streamedWorld.loadedChunkCount(), worldShader.status().c_str()); SDL_SetWindowTitle(window, title);
@@ -767,7 +790,9 @@ int main() {
             worldShader.use(); worldShader.setFloat("uTime", elapsed);
             worldShader.setVec3("uEye", eyeX, eyeY, eyeZ);
             worldShader.setMat4("uInverseView", inverseView);
-            worldShader.setMat4("uLight", lightMatrix);
+            worldShader.setMat4("uLight", lightMatrices[shadowCurrent]);
+            worldShader.setMat4("uLightNext", lightMatrices[shadowNext]);
+            worldShader.setFloat("uShadowBlend", shadowBlend);
             worldShader.setInt("uShadowOn", shadowActive ? 1 : 0);
             worldShader.setInt("uMode", 1);
             if (soilTexture) { glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D, soilTexture); }

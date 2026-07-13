@@ -3,7 +3,10 @@
 uniform sampler2D uAlbedo;
 uniform sampler2D uRock;
 uniform sampler2DShadow uShadow;
+uniform sampler2DShadow uShadowOld;
 uniform mat4 uLight;    // world -> shadow-map texture space
+uniform mat4 uLightNext;
+uniform float uShadowBlend;
 uniform mat4 uInverseView;
 uniform int uShadowOn;
 uniform int uMode;      // 0 = authored mesh, 1 = streamed terrain, 2 = water, 3 = grass, 4 = sky
@@ -178,6 +181,7 @@ void main() {
         // kills the self-shadow acne on thin needles and grazing ground that
         // otherwise sparkles as the sun moves.
         vec4 shadowCoord = uLight * vec4(vWorld + normal * 0.30, 1.0);
+        vec4 shadowCoordNext = uLightNext * vec4(vWorld + normal * 0.30, 1.0);
         if (shadowCoord.x > 0.003 && shadowCoord.x < 0.997 && shadowCoord.y > 0.003 && shadowCoord.y < 0.997) {
             // 4x4 PCF at one-texel spacing: with hardware bilinear each tap
             // covers a texel, so the footprint is CONTIGUOUS (no comb gaps)
@@ -189,6 +193,11 @@ void main() {
                 for (int sx = 0; sx < 4; ++sx)
                     shadow += shadow2D(uShadow, shadowCoord.xyz + vec3((float(sx) - 1.5) * texel.x, (float(sy) - 1.5) * texel.y, 0.0)).r;
             shadow *= 0.0625;
+            float shadowFuture = 0.0;
+            for (int sy = 0; sy < 4; ++sy)
+                for (int sx = 0; sx < 4; ++sx)
+                    shadowFuture += shadow2D(uShadowOld, shadowCoordNext.xyz + vec3((float(sx) - 1.5) * texel.x, (float(sy) - 1.5) * texel.y, 0.0)).r;
+            shadow = mix(shadow, shadowFuture * 0.0625, smoothstep(0.0, 1.0, uShadowBlend));
             // Needle geometry half-shadows itself no matter the bias; lighten
             // its self-shadow term instead of letting it flicker.
             shadow = mix(shadow, min(1.0, shadow + 0.45), foliageMask * 0.55);
