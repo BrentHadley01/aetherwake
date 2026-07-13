@@ -116,9 +116,17 @@ void main() {
         float rockBlend = smoothstep(0.16, 0.40, slope);
         float patchNoise = valueNoise(vWorld.xz * 0.035 + vec2(8.2, -3.7));
         float fineNoise = valueNoise(vWorld.xz * 0.19 - vec2(11.0, 4.0));
-        float moss = smoothstep(0.48, 0.78, patchNoise * 0.72 + fineNoise * 0.28) * (1.0 - rockBlend);
+        float moss = smoothstep(0.44, 0.72, patchNoise * 0.72 + fineNoise * 0.28) * (1.0 - rockBlend);
         vec3 forestSoil = soil * vTint.rgb;
-        forestSoil = mix(forestSoil, forestSoil * vec3(0.62, 0.92, 0.52), moss * 0.34);
+        forestSoil = mix(forestSoil, forestSoil * vec3(0.52, 0.94, 0.43), moss * 0.48);
+        // Broad decaying-leaf and humus islands bridge the visual gap between
+        // the macro terrain and actual litter meshes. Their two scales avoid
+        // a uniformly gravelly floor beneath dense woodland.
+        float humusField = valueNoise(vWorld.xz * 0.075 + vec2(-4.1, 7.8));
+        float litterGrain = valueNoise(vWorld.xz * 0.62 + vec2(12.0, -2.5));
+        float litter = smoothstep(0.50, 0.76, humusField * 0.70 + litterGrain * 0.30) * (1.0 - rockBlend) * (1.0 - moss * 0.55);
+        vec3 leafMould = forestSoil * vec3(0.64, 0.50, 0.35) + vec3(0.010, 0.006, 0.002);
+        forestSoil = mix(forestSoil, leafMould, litter * 0.42);
         vec3 ground = mix(forestSoil, rock, rockBlend);
         float high = smoothstep(34.0, 54.0, vWorld.y);       // pale frost-dusted summits
         ground = mix(ground, rock * vec3(1.35, 1.42, 1.52), high * (1.0 - rockBlend * 0.35));
@@ -153,6 +161,28 @@ void main() {
         materialClass = floor(vMaterial.z + 0.5);
         foliageMask = materialClass > 2.5 && materialClass < 3.5 ? 1.0 :
                        smoothstep(0.025, 0.11, albedo.g - max(albedo.r, albedo.b));
+
+        // Subtle surface variation prevents solid-color botanical geometry
+        // from reading as plastic. It fades before becoming sub-pixel, so the
+        // extra detail does not turn distant crowns into temporal noise.
+        float organicFade = exp(-distanceFromCamera * 0.055);
+        if (foliageMask > 0.01 && organicFade > 0.025) {
+            float broadVein = valueNoise(vWorld.xz * 5.1 + vWorld.yy * 2.7);
+            float fineVein = valueNoise(vWorld.xy * 17.0 + vWorld.zz * 9.0);
+            float leafDetail = broadVein * 0.68 + fineVein * 0.32;
+            albedo *= mix(0.82, 1.13, leafDetail * organicFade + 0.5 * (1.0 - organicFade));
+            materialRoughness = clamp(materialRoughness + (leafDetail - 0.5) * 0.13, 0.62, 0.98);
+            float surfaceNoise = valueNoise(vWorld.xz * 8.0);
+            vec3 wrinkle = vec3(
+                surfaceNoise - valueNoise(vWorld.xz * 8.0 + vec2(0.14, 0.0)),
+                0.0,
+                surfaceNoise - valueNoise(vWorld.xz * 8.0 + vec2(0.0, 0.14)));
+            normal = normalize(normal + wrinkle * 0.22 * organicFade);
+        } else if (materialClass > 1.5 && materialClass < 2.5) {
+            float barkGroove = valueNoise(vec2(vUv.y * 22.0, vUv.x * 7.0));
+            albedo *= mix(0.78, 1.10, barkGroove);
+            materialRoughness = clamp(materialRoughness + (barkGroove - 0.5) * 0.10, 0.68, 1.0);
+        }
 
         // Reconstruct small-scale relief from the authored color plate. This
         // is intentionally near-field and material-gated to avoid distant

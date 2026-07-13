@@ -977,6 +977,126 @@ def build_lupine():
     export_glb("detail_lupine.glb")
 
 
+def build_spruce_sapling():
+    """Young spruce with a readable leader, branch whorls and discrete needles."""
+    reset_scene(); rng = random.Random(2081)
+    bark = solid_material("SaplingBark", (0.075, 0.041, 0.022, 1.0), roughness=0.96)
+    needles_dark = solid_material("SaplingNeedlesDark", (0.015, 0.060, 0.028, 1.0), roughness=0.90)
+    needles_lit = solid_material("SaplingNeedlesLit", (0.030, 0.105, 0.045, 1.0), roughness=0.84)
+    for plant in range(3):
+        offset = Vector((rng.uniform(-0.58, 0.58), rng.uniform(-0.46, 0.46), 0.0))
+        height = rng.uniform(1.20, 2.15)
+        top = offset + Vector((rng.uniform(-0.08, 0.08), rng.uniform(-0.08, 0.08), height))
+        trunk = add_cone_between(offset, top, 0.040, 0.007, sides=10)
+        trunk.name = f"SaplingTrunk{plant}"; trunk.data.materials.append(bark)
+        spray_verts, spray_faces, spray_sides = [], [], []
+        for row in range(7):
+            t = 0.18 + row * 0.105
+            center = offset.lerp(top, t)
+            radius = (1.0 - t) * rng.uniform(0.38, 0.60)
+            arms = 3 + (row + plant) % 2
+            rotation = row * GOLDEN_ANGLE * 0.45 + rng.uniform(-0.25, 0.25)
+            for arm in range(arms):
+                angle = rotation + arm * math.tau / arms + rng.uniform(-0.16, 0.16)
+                direction = Vector((math.cos(angle), math.sin(angle), rng.uniform(-0.25, 0.04))).normalized()
+                tip = center + direction * radius
+                branch = add_cone_between(center, tip, 0.014, 0.0025, sides=6)
+                branch.name = f"SaplingBranch{plant}_{row}_{arm}"; branch.data.materials.append(bark)
+                for station in (0.32, 0.66, 0.92):
+                    spray_cluster(rng, spray_verts, spray_faces, spray_sides, center.lerp(tip, station), direction,
+                                  count=22, blade_length=0.10, spread=0.72, width_min=0.035, width_max=0.075)
+        spray_cluster(rng, spray_verts, spray_faces, spray_sides, top, Vector((0, 0, 1)),
+                      count=54, blade_length=0.11, spread=0.60, width_min=0.035, width_max=0.070)
+        mesh = bpy.data.meshes.new(f"SaplingNeedleMesh{plant}"); mesh.from_pydata(spray_verts, [], spray_faces)
+        mesh.materials.append(needles_dark); mesh.materials.append(needles_lit)
+        for polygon, lit in zip(mesh.polygons, spray_sides): polygon.material_index = 1 if lit else 0
+        obj = bpy.data.objects.new(f"IndividualSaplingNeedles{plant}", mesh); bpy.context.collection.objects.link(obj)
+    export_glb("detail_spruce_sapling.glb")
+
+
+def build_wood_sorrel():
+    """Dense trifoliate woodland herb with occasional five-petal flowers."""
+    reset_scene(); rng = random.Random(2099)
+    stem = solid_material("WoodSorrelStems", (0.025, 0.095, 0.027, 1.0), roughness=0.92)
+    leaf = solid_material("WoodSorrelLeaves", (0.030, 0.145, 0.042, 1.0), roughness=0.82)
+    petal = solid_material("WoodSorrelPetals", (0.78, 0.75, 0.66, 1.0), roughness=0.76)
+    leaf_verts, leaf_faces, petal_verts, petal_faces = [], [], [], []
+    for plant in range(28):
+        angle = plant * GOLDEN_ANGLE; radius = 0.08 * math.sqrt(plant)
+        root = Vector((math.cos(angle) * radius, math.sin(angle) * radius, 0.0))
+        top = root + Vector((rng.uniform(-0.05, 0.05), rng.uniform(-0.05, 0.05), rng.uniform(0.12, 0.30)))
+        stalk = add_cone_between(root, top, 0.007, 0.0025, sides=6); stalk.name = f"SorrelStem{plant}"; stalk.data.materials.append(stem)
+        for leaflet in range(3):
+            a = angle + leaflet * math.tau / 3.0
+            add_leaf_blade(leaf_verts, leaf_faces, top, Vector((math.cos(a), math.sin(a), 0.12)).normalized(),
+                           rng.uniform(0.08, 0.14), rng.uniform(0.035, 0.058))
+        if plant % 7 == 0:
+            flower = top + Vector((0, 0, rng.uniform(0.05, 0.11)))
+            for p in range(5):
+                a = p * math.tau / 5.0
+                add_leaf_blade(petal_verts, petal_faces, flower, Vector((math.cos(a), math.sin(a), 0.15)).normalized(), 0.055, 0.020)
+    leaf_mesh = bpy.data.meshes.new("IndividualWoodSorrelLeaves"); leaf_mesh.from_pydata(leaf_verts, [], leaf_faces); leaf_mesh.materials.append(leaf)
+    bpy.context.collection.objects.link(bpy.data.objects.new("IndividualWoodSorrelLeaves", leaf_mesh))
+    petal_mesh = bpy.data.meshes.new("IndividualWoodSorrelPetals"); petal_mesh.from_pydata(petal_verts, [], petal_faces); petal_mesh.materials.append(petal)
+    bpy.context.collection.objects.link(bpy.data.objects.new("IndividualWoodSorrelPetals", petal_mesh))
+    export_glb("detail_wood_sorrel.glb")
+
+
+def build_fireweed():
+    """Tall meadow pioneer plant with lance leaves and irregular bloom spires."""
+    reset_scene(); rng = random.Random(2111)
+    stem = solid_material("FireweedStems", (0.055, 0.105, 0.035, 1.0), roughness=0.90)
+    leaf = solid_material("FireweedLeaves", (0.035, 0.125, 0.036, 1.0), roughness=0.84)
+    petal = solid_material("FireweedPetals", (0.50, 0.075, 0.23, 1.0), roughness=0.70)
+    leaf_verts, leaf_faces = [], []
+    for plant in range(12):
+        a = plant * GOLDEN_ANGLE; r = rng.uniform(0.05, 0.62)
+        root = Vector((math.cos(a) * r, math.sin(a) * r, 0.0)); h = rng.uniform(0.65, 1.38)
+        top = root + Vector((rng.uniform(-0.09, 0.09), rng.uniform(-0.09, 0.09), h))
+        stalk = add_cone_between(root, top, 0.013, 0.004, sides=8); stalk.name = f"FireweedStem{plant}"; stalk.data.materials.append(stem)
+        for leaf_index in range(7):
+            t = 0.16 + leaf_index * 0.09; la = a + leaf_index * GOLDEN_ANGLE
+            add_leaf_blade(leaf_verts, leaf_faces, root.lerp(top, t), Vector((math.cos(la), math.sin(la), 0.04)).normalized(),
+                           rng.uniform(0.15, 0.25), rng.uniform(0.025, 0.045))
+        for bloom_index in range(7):
+            t = 0.62 + bloom_index * 0.050
+            if t > 0.97: break
+            ba = a + bloom_index * GOLDEN_ANGLE
+            center = root.lerp(top, t) + Vector((math.cos(ba) * 0.045, math.sin(ba) * 0.045, 0))
+            add_bell_bloom(f"FireweedBloom{plant}_{bloom_index}", center, 0.040, 0.060, petal, lobes=4)
+    mesh = bpy.data.meshes.new("IndividualFireweedLeaves"); mesh.from_pydata(leaf_verts, [], leaf_faces); mesh.materials.append(leaf)
+    bpy.context.collection.objects.link(bpy.data.objects.new("IndividualFireweedLeaves", mesh))
+    export_glb("detail_fireweed.glb")
+
+
+def build_wood_anemone():
+    """Low spring wildflower mats for bright pockets beneath deciduous trees."""
+    reset_scene(); rng = random.Random(2129)
+    stem = solid_material("AnemoneStems", (0.030, 0.100, 0.030, 1.0), roughness=0.91)
+    leaf = solid_material("AnemoneLeaves", (0.025, 0.115, 0.030, 1.0), roughness=0.83)
+    petal = solid_material("AnemonePetals", (0.88, 0.86, 0.79, 1.0), roughness=0.72)
+    pollen = solid_material("AnemonePollen", (0.72, 0.50, 0.08, 1.0), roughness=0.60)
+    leaf_verts, leaf_faces, petal_verts, petal_faces = [], [], [], []
+    for plant in range(18):
+        a = plant * GOLDEN_ANGLE; r = rng.uniform(0.04, 0.64)
+        root = Vector((math.cos(a) * r, math.sin(a) * r, 0)); h = rng.uniform(0.18, 0.42)
+        top = root + Vector((rng.uniform(-0.045, 0.045), rng.uniform(-0.045, 0.045), h))
+        stalk = add_cone_between(root, top, 0.008, 0.003, sides=7); stalk.name = f"AnemoneStem{plant}"; stalk.data.materials.append(stem)
+        for leaflet in range(3):
+            la = a + leaflet * math.tau / 3.0
+            add_leaf_blade(leaf_verts, leaf_faces, root.lerp(top, 0.44), Vector((math.cos(la), math.sin(la), 0.08)).normalized(), 0.11, 0.038)
+        if plant % 2 == 0:
+            for p in range(6):
+                pa = p * math.tau / 6.0
+                add_leaf_blade(petal_verts, petal_faces, top, Vector((math.cos(pa), math.sin(pa), 0.10)).normalized(), 0.075, 0.028)
+            add_seed_grain(f"AnemoneCenter{plant}", top + Vector((0, 0, 0.012)), 0.018, pollen)
+    leaf_mesh = bpy.data.meshes.new("IndividualAnemoneLeaves"); leaf_mesh.from_pydata(leaf_verts, [], leaf_faces); leaf_mesh.materials.append(leaf)
+    bpy.context.collection.objects.link(bpy.data.objects.new("IndividualAnemoneLeaves", leaf_mesh))
+    petal_mesh = bpy.data.meshes.new("IndividualAnemonePetals"); petal_mesh.from_pydata(petal_verts, [], petal_faces); petal_mesh.materials.append(petal)
+    bpy.context.collection.objects.link(bpy.data.objects.new("IndividualAnemonePetals", petal_mesh))
+    export_glb("detail_wood_anemone.glb")
+
+
 def build_wayfinder():
     """Detailed grounded third-person mage with a readable human silhouette."""
     reset_scene()
@@ -1165,6 +1285,10 @@ build_forest_litter()
 build_pebbles()
 build_moss_mat()
 build_lupine()
+build_spruce_sapling()
+build_wood_sorrel()
+build_fireweed()
+build_wood_anemone()
 build_wayfinder()
 print("DETAIL ASSETS EXPORTED")
 

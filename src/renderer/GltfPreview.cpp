@@ -14,13 +14,20 @@
 #include <string>
 #include <vector>
 
+#ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
+#define GL_TEXTURE_MAX_ANISOTROPY_EXT 0x84FE
+#endif
+
 namespace aetherwake::renderer {
 using MultiTexCoord3fFn = void(APIENTRYP)(GLenum, GLfloat, GLfloat, GLfloat);
+using GenerateMipmapFn = void(APIENTRYP)(GLenum);
 static MultiTexCoord3fFn multiTexCoord3f{};
+static GenerateMipmapFn generateMipmap{};
 struct GltfPreview::Impl { tinygltf::Model model; std::vector<GLuint> textures; GLuint whiteTexture{}; };
 
 bool GltfPreview::load(const std::string& path) {
     if (!multiTexCoord3f) multiTexCoord3f = reinterpret_cast<MultiTexCoord3fFn>(SDL_GL_GetProcAddress("glMultiTexCoord3f"));
+    if (!generateMipmap) generateMipmap = reinterpret_cast<GenerateMipmapFn>(SDL_GL_GetProcAddress("glGenerateMipmap"));
     impl_ = new Impl{};
     std::string warn, err;
     if (!tinygltf::TinyGLTF{}.LoadBinaryFromFile(&impl_->model, &err, &warn, path)) {
@@ -34,10 +41,12 @@ bool GltfPreview::load(const std::string& path) {
         const auto& image = impl_->model.images[i];
         if (image.image.empty() || image.width <= 0 || image.height <= 0) continue;
         glGenTextures(1, &impl_->textures[i]); glBindTexture(GL_TEXTURE_2D, impl_->textures[i]);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, generateMipmap ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, 4.0F);
         const GLenum format = image.component == 4 ? GL_RGBA : GL_RGB;
         glTexImage2D(GL_TEXTURE_2D, 0, format, image.width, image.height, 0, format, GL_UNSIGNED_BYTE, image.image.data());
+        if (generateMipmap) generateMipmap(GL_TEXTURE_2D);
     }
     status_ = warn.empty() ? "Loaded Blender scene" : "Loaded with warning: " + warn;
     return true;

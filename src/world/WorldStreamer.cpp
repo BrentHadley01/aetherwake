@@ -185,14 +185,17 @@ void WorldStreamer::update(float playerX, float playerZ) {
                     const float forest = fbm(clumpX * 0.009F + 5.0F, clumpZ * 0.009F + 5.0F, 3);
                     // Meadows carry the densest carpet, forest floor stays
                     // moderate, dry exposed ground goes patchy.
-                    float density = 0.35F + 0.62F * moisture;
+                    float density = 0.50F + 0.48F * moisture;
                     if (forest < 0.42F) density = std::min(1.0F, density * 1.3F);
                     if (grassUnit() > density) continue;
                     const float clumpY = heightAt(clumpX, clumpZ);
                     if (clumpY < waterLevel + 0.8F) continue;
                     const float rise = std::abs(heightAt(clumpX + 1.6F, clumpZ) - clumpY) + std::abs(heightAt(clumpX, clumpZ + 1.6F) - clumpY);
                     if (rise / 3.2F > 0.55F) continue;                     // cliffs and scree stay bare
-                    const int blades = (lod == 0 ? 5 : 3) + static_cast<int>(grassUnit() * (lod == 0 ? 3.8F : 2.4F));
+            // More, finer blades read as a continuous sward without
+            // increasing the near-field quad budget: near blades use
+            // single tapered ribbons instead of three broad strips.
+                    const int blades = (lod == 0 ? 14 : 5) + static_cast<int>(grassUnit() * (lod == 0 ? 10.8F : 4.4F));
                     for (int blade = 0; blade < blades; ++blade) {
                         const float bx = clumpX + (grassUnit() - 0.5F) * 0.8F, bz = clumpZ + (grassUnit() - 0.5F) * 0.8F;
                         // Blades reuse the clump height (sunk slightly) so the
@@ -206,10 +209,10 @@ void WorldStreamer::update(float playerX, float playerZ) {
                         const bool broadBlade = moisture > 0.57F && species > 0.72F;
                         const bool dryBlade = moisture < 0.45F && species > 0.48F;
                         const float lean = (0.08F + grassUnit() * 0.28F) * (broadBlade ? 0.72F : 1.0F);
-                        const float tall = seedHead ? 0.88F + grassUnit() * 0.38F :
-                                           broadBlade ? 0.38F + grassUnit() * 0.42F + tallBias :
-                                           0.32F + grassUnit() * 0.52F + tallBias;
-                        const float bladeWidth = (seedHead ? 0.020F : broadBlade ? 0.060F : 0.039F) * widthScale;
+                        const float tall = seedHead ? 0.82F + grassUnit() * 0.36F :
+                                           broadBlade ? 0.34F + grassUnit() * 0.38F + tallBias :
+                                           0.27F + grassUnit() * 0.43F + tallBias;
+                        const float bladeWidth = (seedHead ? 0.009F : broadBlade ? 0.032F : 0.014F) * widthScale;
                         const float shade = 0.7F + grassUnit() * 0.45F;
                         float rootR = (0.022F + 0.018F * (1.0F - moisture)) * shade;
                         float rootG = (0.050F + 0.038F * moisture) * shade;
@@ -223,7 +226,7 @@ void WorldStreamer::update(float playerX, float playerZ) {
                             tipR += (0.155F - tipR) * dryMix; tipG += (0.135F - tipG) * dryMix; tipB += (0.048F - tipB) * dryMix;
                         }
                         const float flexibility = seedHead ? 0.58F : broadBlade ? 0.72F : 1.0F;
-                        const int sections = lod == 0 ? 3 : 1;
+                        const int sections = 1;
                         // The ribbon normal follows its resting bend plane,
                         // producing a highlight that rolls across the field.
                         const float normalLength = std::sqrt(tall * tall + lean * lean);
@@ -264,7 +267,8 @@ void WorldStreamer::update(float playerX, float playerZ) {
                 // 11 meadow grass, 14 birch (12/13 and 15 are render-only LODs),
                 // 16 clover, 17 sedge, 18 dry grass, 19 litter, 20 pebbles,
                 // 21 lupine, 22 moss mat, 23 slab, 24 outcrop, 25 stump,
-                // 26 branch pile.
+                // 26 branch pile; 39 spruce sapling, 40 wood sorrel,
+                // 41 fireweed, 42 wood anemone (27-38 are tree render LODs).
                 for (int attempt = 0; attempt < 104; ++attempt) {
                     const float px = originX + nextUnit() * chunkSize, pz = originZ + nextUnit() * chunkSize;
                     const float py = heightAt(px, pz);
@@ -316,6 +320,8 @@ void WorldStreamer::update(float playerX, float playerZ) {
                     }
                     if (forested && slope < 0.26F && nextUnit() < 0.022F)
                         chunk.details.push_back({px + nextUnit() * 2.0F - 1.0F, py - 0.03F, pz + nextUnit() * 2.0F - 1.0F, 0.65F + nextUnit() * 0.75F, nextUnit() * 360.0F, 25});
+                    if (forested && slope < 0.30F && nextUnit() < 0.028F)
+                        chunk.details.push_back({px + nextUnit() * 2.6F - 1.3F, py - 0.04F, pz + nextUnit() * 2.6F - 1.3F, 0.72F + nextUnit() * 0.55F, nextUnit() * 360.0F, 39});
                     // A second, independent ground-layer decision creates
                     // overlapping ecological strata instead of one prop per
                     // sample. Each GLB is already a dense natural cluster.
@@ -326,10 +332,13 @@ void WorldStreamer::update(float playerX, float playerZ) {
                             const float layerPick = nextUnit();
                             int groundType = -1;
                             if (gy < waterLevel + 3.2F && moisture > 0.46F) groundType = 17;                  // shoreline sedge
-                            else if (forested && moisture > 0.60F && layerPick < 0.34F) groundType = 22;      // moss cushions
-                            else if (forested && layerPick < 0.70F) groundType = 19;                           // curled leaves/twigs
+                            else if (forested && moisture > 0.60F && layerPick < 0.22F) groundType = 22;      // moss cushions
+                            else if (forested && moisture > 0.54F && layerPick < 0.42F) groundType = 40;      // wood sorrel colonies
+                            else if (forested && birchGrove && layerPick < 0.58F) groundType = 42;            // anemone light pockets
+                            else if (forested && layerPick < 0.78F) groundType = 19;                           // curled leaves/twigs
                             else if (forested) groundType = moisture > 0.52F ? 16 : 20;                       // clover or stones
-                            else if (meadow && moisture > 0.54F && layerPick < 0.32F) groundType = 21;       // lupine pockets
+                            else if (meadow && moisture > 0.54F && layerPick < 0.22F) groundType = 21;       // lupine pockets
+                            else if (meadow && layerPick < 0.44F) groundType = 41;                             // fireweed stands
                             else if (moisture > 0.48F) groundType = 16;                                       // clover meadow
                             else if (layerPick < 0.78F) groundType = 18;                                      // dry fescue
                             else groundType = 20;                                                              // pebble scatter
@@ -421,7 +430,8 @@ void WorldStreamer::drawDetails(const unsigned int* lists, int listCount, float 
             const float cameraDx = instance.x - excludeX, cameraDz = instance.z - excludeZ;
             const float distanceSquared = cameraDx * cameraDx + cameraDz * cameraDz;
             const bool tree = instance.type <= 2 || instance.type == 14;
-            const bool microCover = instance.type >= 16 && instance.type <= 22;
+            const bool microCover = (instance.type >= 16 && instance.type <= 22) || instance.type >= 40;
+            const bool youngTree = instance.type == 39;
             const bool largeNatural = instance.type >= 23 && instance.type <= 26;
             const bool shadowPass = viewForwardX == 0.0F && viewForwardZ == 0.0F;
             if (shadowPass && microCover) continue; // micro-cover is sub-pixel in the shadow map
@@ -430,7 +440,7 @@ void WorldStreamer::drawDetails(const unsigned int* lists, int listCount, float 
                 // Small props vanish into fog/grass long before the large tree
                 // silhouettes do. This is a visibility budget, not a quality
                 // reduction for anything the player can resolve.
-                const float typeDistance = tree ? maxDistance : (instance.type <= 5 || largeNatural) ? maxDistance * 0.52F : microCover ? maxDistance * 0.07F : maxDistance * 0.30F;
+                const float typeDistance = tree ? maxDistance : youngTree ? maxDistance * 0.22F : (instance.type <= 5 || largeNatural) ? maxDistance * 0.52F : microCover ? maxDistance * 0.07F : maxDistance * 0.30F;
                 if (distanceSquared > typeDistance * typeDistance) continue;
                 // The render back-end still clips off-screen geometry, but it
                 // has already paid to submit it. Cull the rear hemisphere on

@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <vector>
 
 #ifndef GL_TEXTURE2
@@ -556,6 +557,14 @@ void saveScreenshot(const char* path, int width, int height) {
 int main() {
     using namespace aetherwake;
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) return 1;
+    // Asset paths are packaged beside the executable. Anchoring the process
+    // here makes Explorer, Steam and desktop launches behave exactly like a
+    // launch from the repository root instead of silently losing the world.
+    if (const char* basePath = SDL_GetBasePath(); basePath && *basePath) {
+        std::error_code pathError;
+        std::filesystem::current_path(basePath, pathError);
+        if (pathError) std::fprintf(stderr, "[aetherwake] could not set asset root: %s\n", pathError.message().c_str());
+    }
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1); SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1); SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
     SDL_Window* window = SDL_CreateWindow("Aetherwake — The Veiled Reach", 1280, 720, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
@@ -638,8 +647,8 @@ int main() {
 
     // Blender-authored environment details, compiled once into display lists and
     // instanced across the streamed terrain by the world streamer.
-    std::array<GLuint, 39> detailLists{};
-    const std::array<const char*, 39> detailFiles{"assets/models/detail_pine.glb", "assets/models/detail_spruce.glb", "assets/models/detail_snag.glb", "assets/models/detail_boulder.glb", "assets/models/detail_fern.glb", "assets/models/detail_log.glb", "assets/models/detail_wildflower.glb", "assets/models/detail_heather.glb", "assets/models/detail_mushrooms.glb", "assets/models/detail_reeds.glb", "assets/models/detail_shrub.glb", "assets/models/detail_meadow_grass.glb", "assets/models/detail_pine_lod.glb", "assets/models/detail_spruce_lod.glb", "assets/models/detail_birch.glb", "assets/models/detail_birch_lod.glb", "assets/models/detail_clover.glb", "assets/models/detail_sedge.glb", "assets/models/detail_dry_grass.glb", "assets/models/detail_forest_litter.glb", "assets/models/detail_pebbles.glb", "assets/models/detail_lupine.glb", "assets/models/detail_moss_mat.glb", "assets/models/detail_rock_slab.glb", "assets/models/detail_rock_outcrop.glb", "assets/models/detail_stump.glb", "assets/models/detail_branch_pile.glb", "assets/models/detail_pine_far.glb", "assets/models/detail_spruce_far.glb", "assets/models/detail_pine_impostor.glb", "assets/models/detail_spruce_impostor.glb", "assets/models/detail_pine_old.glb", "assets/models/detail_spruce_old.glb", "assets/models/detail_pine_old_lod.glb", "assets/models/detail_spruce_old_lod.glb", "assets/models/detail_pine_old_far.glb", "assets/models/detail_spruce_old_far.glb", "assets/models/detail_pine_old_impostor.glb", "assets/models/detail_spruce_old_impostor.glb"};
+    std::array<GLuint, 43> detailLists{};
+    const std::array<const char*, 43> detailFiles{"assets/models/detail_pine.glb", "assets/models/detail_spruce.glb", "assets/models/detail_snag.glb", "assets/models/detail_boulder.glb", "assets/models/detail_fern.glb", "assets/models/detail_log.glb", "assets/models/detail_wildflower.glb", "assets/models/detail_heather.glb", "assets/models/detail_mushrooms.glb", "assets/models/detail_reeds.glb", "assets/models/detail_shrub.glb", "assets/models/detail_meadow_grass.glb", "assets/models/detail_pine_lod.glb", "assets/models/detail_spruce_lod.glb", "assets/models/detail_birch.glb", "assets/models/detail_birch_lod.glb", "assets/models/detail_clover.glb", "assets/models/detail_sedge.glb", "assets/models/detail_dry_grass.glb", "assets/models/detail_forest_litter.glb", "assets/models/detail_pebbles.glb", "assets/models/detail_lupine.glb", "assets/models/detail_moss_mat.glb", "assets/models/detail_rock_slab.glb", "assets/models/detail_rock_outcrop.glb", "assets/models/detail_stump.glb", "assets/models/detail_branch_pile.glb", "assets/models/detail_pine_far.glb", "assets/models/detail_spruce_far.glb", "assets/models/detail_pine_impostor.glb", "assets/models/detail_spruce_impostor.glb", "assets/models/detail_pine_old.glb", "assets/models/detail_spruce_old.glb", "assets/models/detail_pine_old_lod.glb", "assets/models/detail_spruce_old_lod.glb", "assets/models/detail_pine_old_far.glb", "assets/models/detail_spruce_old_far.glb", "assets/models/detail_pine_old_impostor.glb", "assets/models/detail_spruce_old_impostor.glb", "assets/models/detail_spruce_sapling.glb", "assets/models/detail_wood_sorrel.glb", "assets/models/detail_fireweed.glb", "assets/models/detail_wood_anemone.glb"};
     for (std::size_t i = 0; i < detailFiles.size(); ++i) {
         renderer::GltfPreview detail;
         if (!detail.load(detailFiles[i])) continue;
