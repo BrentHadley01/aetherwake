@@ -119,7 +119,7 @@ void buildOrtho(float halfWidth, float halfHeight, float nearPlane, float farPla
     m[10] = -2.0F / (farPlane - nearPlane); m[14] = -(farPlane + nearPlane) / (farPlane - nearPlane); m[15] = 1.0F;
 }
 
-enum class SpellVfxKind : unsigned char { Ember, Tide, Stone, Veil };
+enum class SpellVfxKind : unsigned char { Ember, Tide, Stone, Veil, Terrain };
 struct SpellParticle {
     float x{}, y{}, z{}, vx{}, vy{}, vz{};
     float age{}, lifetime{}, size{};
@@ -176,12 +176,26 @@ void spawnSpellVfx(std::vector<SpellParticle>& particles, int spellIndex, float 
     }
 }
 
+void spawnTerrainVfx(std::vector<SpellParticle>& particles, float x, float y, float z, int seed) {
+    for (int i = 0; i < 9; ++i) {
+        const float angle = (i + seed * 0.37F) * 2.39996F;
+        const float radial = 0.25F + vfxNoise(seed * 17 + i * 5) * 1.55F;
+        SpellParticle p{}; p.kind = SpellVfxKind::Terrain;
+        p.x = x + std::cos(angle) * radial; p.y = y + 0.04F; p.z = z + std::sin(angle) * radial;
+        p.vx = -std::sin(angle) * 0.34F; p.vy = 1.2F + vfxNoise(seed + i) * 2.1F; p.vz = std::cos(angle) * 0.34F;
+        p.size = 0.07F + vfxNoise(seed * 7 + i) * 0.14F;
+        p.lifetime = 0.72F + vfxNoise(seed * 3 + i) * 0.58F;
+        particles.push_back(p);
+    }
+}
+
 void updateSpellVfx(std::vector<SpellParticle>& particles, float dt) {
     for (SpellParticle& p : particles) {
         p.age += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
         if (p.kind == SpellVfxKind::Ember) { p.vy -= 3.3F * dt; p.vx *= 0.985F; p.vz *= 0.985F; }
         else if (p.kind == SpellVfxKind::Stone) p.vy -= 11.0F * dt;
         else if (p.kind == SpellVfxKind::Veil) { p.vx *= 0.992F; p.vz *= 0.992F; }
+        else if (p.kind == SpellVfxKind::Terrain) { p.vy *= std::pow(0.22F, dt); p.vx *= 0.985F; p.vz *= 0.985F; }
     }
     particles.erase(std::remove_if(particles.begin(), particles.end(), [](const SpellParticle& p) { return p.age >= p.lifetime; }), particles.end());
 }
@@ -198,6 +212,7 @@ void drawSpellVfx(const std::vector<SpellParticle>& particles, float forwardX, f
         if (p.kind == SpellVfxKind::Ember) { r = 1.0F; g = 0.16F + 0.48F * (1.0F - t); b = 0.025F; }
         else if (p.kind == SpellVfxKind::Stone) { r = 0.92F; g = 0.49F; b = 0.14F; }
         else if (p.kind == SpellVfxKind::Veil) { r = 0.22F + 0.30F * t; g = 0.82F; b = 0.92F; }
+        else if (p.kind == SpellVfxKind::Terrain) { r = 0.48F; g = 0.30F + 0.18F * (1.0F - t); b = 0.13F; }
         const float s = p.size * (0.7F + fade * 1.4F);
         glColor4f(r, g, b, fade * 0.72F);
         glTexCoord2f(0, 0); glVertex3f(p.x - rightX * s, p.y - s, p.z - rightZ * s);
@@ -445,6 +460,88 @@ void drawFullscreenQuad() {
     glEnd();
 }
 
+void hudRect(float x0, float y0, float x1, float y1, float r, float g, float b, float a) {
+    glColor4f(r, g, b, a); glBegin(GL_QUADS);
+    glVertex2f(x0, y0); glVertex2f(x1, y0); glVertex2f(x1, y1); glVertex2f(x0, y1); glEnd();
+}
+
+void hudRing(float cx, float cy, float radius, float r, float g, float b, float a) {
+    glColor4f(r, g, b, a); glBegin(GL_LINE_LOOP);
+    for (int i = 0; i < 48; ++i) { const float angle = i / 48.0F * 6.2831853F; glVertex2f(cx + std::cos(angle) * radius, cy + std::sin(angle) * radius); }
+    glEnd();
+}
+
+void drawHud(int width, int height, int selectedSpell, int health, int mana, bool inventoryOpen,
+             bool customizeOpen, int appearance, int bodyType, float heroX, float heroZ, float yaw, bool terrainCasting) {
+    glDisable(GL_DEPTH_TEST); glDepthMask(GL_FALSE); glDisable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); glOrtho(0, width, height, 0, -1, 1);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+
+    // Health and mana glass bars.
+    hudRect(24, height - 76, 278, height - 24, 0.015F, 0.022F, 0.030F, 0.78F);
+    hudRect(36, height - 64, 36 + 224 * std::clamp(health / 100.0F, 0.0F, 1.0F), height - 49, 0.58F, 0.055F, 0.045F, 0.92F);
+    hudRect(36, height - 43, 36 + 224 * std::clamp(mana / 100.0F, 0.0F, 1.0F), height - 30, 0.035F, 0.42F, 0.72F, 0.92F);
+
+    // Spell belt with an illuminated selected slot.
+    const float beltX = width * 0.5F - 122.0F;
+    const float spellColors[4][3] = {{1.0F,0.20F,0.04F},{0.08F,0.58F,0.95F},{0.62F,0.35F,0.12F},{0.22F,0.84F,0.90F}};
+    for (int i = 0; i < 4; ++i) {
+        const float x = beltX + i * 62.0F;
+        hudRect(x, height - 72, x + 52, height - 20, 0.012F, 0.018F, 0.026F, 0.82F);
+        const float inset = i == selectedSpell ? 8.0F : 14.0F;
+        hudRect(x + inset, height - 72 + inset, x + 52 - inset, height - 20 - inset,
+                spellColors[i][0], spellColors[i][1], spellColors[i][2], i == selectedSpell ? 0.95F : 0.48F);
+    }
+
+    // Rotating minimap with terrain contour hints and player heading.
+    const float mapX = width - 112.0F, mapY = 112.0F;
+    glPointSize(3.0F); glBegin(GL_POINTS);
+    for (int iz = -5; iz <= 5; ++iz) for (int ix = -5; ix <= 5; ++ix) {
+        const float sampleX = heroX + ix * 9.0F, sampleZ = heroZ + iz * 9.0F;
+        const float h = aetherwake::world::WorldStreamer::heightAt(sampleX, sampleZ);
+        const float shade = std::clamp(0.22F + (h + 12.0F) * 0.012F, 0.18F, 0.62F);
+        glColor4f(shade * 0.45F, shade * 0.78F, shade * 0.52F, 0.74F);
+        glVertex2f(mapX + ix * 9.0F, mapY + iz * 9.0F);
+    }
+    glEnd(); hudRing(mapX, mapY, 52.0F, 0.46F, 0.76F, 0.82F, 0.86F);
+    const float heading = yaw * 0.017453293F;
+    glColor4f(0.74F, 0.94F, 1.0F, 1.0F); glBegin(GL_TRIANGLES);
+    glVertex2f(mapX + std::sin(heading) * 13.0F, mapY - std::cos(heading) * 13.0F);
+    glVertex2f(mapX - 6.0F, mapY + 7.0F); glVertex2f(mapX + 6.0F, mapY + 7.0F); glEnd();
+
+    // Centre aiming reticle; amber while earth-shaping is active.
+    const float cr = terrainCasting ? 1.0F : 0.65F, cg = terrainCasting ? 0.48F : 0.86F;
+    glColor4f(cr, cg, 0.18F, 0.90F); glBegin(GL_LINES);
+    glVertex2f(width * 0.5F - 9, height * 0.5F); glVertex2f(width * 0.5F - 2, height * 0.5F);
+    glVertex2f(width * 0.5F + 2, height * 0.5F); glVertex2f(width * 0.5F + 9, height * 0.5F);
+    glVertex2f(width * 0.5F, height * 0.5F - 9); glVertex2f(width * 0.5F, height * 0.5F - 2);
+    glVertex2f(width * 0.5F, height * 0.5F + 2); glVertex2f(width * 0.5F, height * 0.5F + 9); glEnd();
+
+    if (inventoryOpen) {
+        hudRect(width * 0.5F - 238, height * 0.5F - 185, width * 0.5F + 238, height * 0.5F + 185, 0.012F, 0.018F, 0.026F, 0.94F);
+        for (int row = 0; row < 4; ++row) for (int col = 0; col < 6; ++col) {
+            const float x = width * 0.5F - 202 + col * 68, y = height * 0.5F - 122 + row * 68;
+            hudRect(x, y, x + 54, y + 54, 0.08F, 0.105F, 0.12F, 0.92F);
+            if (row == 0 && col < 4) hudRect(x + 14, y + 14, x + 40, y + 40, spellColors[col][0], spellColors[col][1], spellColors[col][2], 0.82F);
+        }
+    }
+    if (customizeOpen) {
+        const float panelX = 28.0F, panelY = 110.0F;
+        hudRect(panelX, panelY, panelX + 220, panelY + 126, 0.015F, 0.022F, 0.030F, 0.92F);
+        hudRect(panelX + 18, panelY + 12, panelX + 96, panelY + 38, 0.14F, 0.32F, 0.52F, bodyType == 0 ? 1.0F : 0.35F);
+        hudRect(panelX + 106, panelY + 12, panelX + 202, panelY + 38, 0.46F, 0.19F, 0.34F, bodyType == 1 ? 1.0F : 0.35F);
+        for (int i = 0; i < 4; ++i) {
+            const bool active = i == appearance;
+            hudRect(panelX + 18 + i * 48, panelY + 48, panelX + 54 + i * 48, panelY + 92,
+                    0.18F + i * 0.12F, 0.24F + (3 - i) * 0.08F, 0.34F + i * 0.06F, active ? 1.0F : 0.48F);
+        }
+    }
+
+    glMatrixMode(GL_MODELVIEW); glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW);
+    glDisable(GL_BLEND); glDepthMask(GL_TRUE); glEnable(GL_DEPTH_TEST);
+}
+
 void saveScreenshot(const char* path, int width, int height) {
     std::vector<unsigned char> pixels(static_cast<std::size_t>(width) * height * 3);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
@@ -549,17 +646,32 @@ int main() {
         detailLists[i] = glGenLists(1);
         glNewList(detailLists[i], GL_COMPILE); detail.draw(); glEndList();
     }
-    renderer::GltfPreview wayfinderModel;
-    GLuint wayfinderList = 0;
-    if (wayfinderModel.load("assets/models/detail_wayfinder.glb")) {
-        wayfinderList = glGenLists(1);
-        glNewList(wayfinderList, GL_COMPILE); wayfinderModel.draw(); glEndList();
+    std::array<renderer::GltfPreview, 2> playerModels;
+    std::array<GLuint, 2> playerLists{};
+    const std::array<const char*, 2> playerFiles{"assets/models/player_male.glb", "assets/models/player_female.glb"};
+    for (int playerIndex = 0; playerIndex < 2; ++playerIndex) {
+        if (!playerModels[playerIndex].load(playerFiles[playerIndex])) continue;
+        playerLists[playerIndex] = glGenLists(1);
+        glNewList(playerLists[playerIndex], GL_COMPILE); playerModels[playerIndex].draw(); glEndList();
+    }
+    // Keep the authored Wayfinder as a safe fallback if a character asset is missing.
+    renderer::GltfPreview fallbackPlayer;
+    if ((!playerLists[0] || !playerLists[1]) && fallbackPlayer.load("assets/models/detail_wayfinder.glb")) {
+        const GLuint fallbackList = glGenLists(1); glNewList(fallbackList, GL_COMPILE); fallbackPlayer.draw(); glEndList();
+        if (!playerLists[0]) playerLists[0] = fallbackList;
+        if (!playerLists[1]) playerLists[1] = fallbackList;
     }
 
     world::WorldStreamer streamedWorld;
     AbilitySystem magic; PlayerState player{1, "Wayfinder", 100, 100, 0, {"ember_lance", "tidal_bind", "stone_lift", "veil_sight"}}; EnemyState warden{101, "Thorn Warden", 120, false}; WorldPropState heart{"hollowmere.observatory_heart", false, ""};
     const std::array<const char*, 4> spells{"ember_lance", "tidal_bind", "stone_lift", "veil_sight"}; int selected = 0;
     std::vector<SpellParticle> spellParticles;
+    bool inventoryOpen = std::getenv("AETHERWAKE_INVENTORY") != nullptr;
+    bool customizeOpen = std::getenv("AETHERWAKE_CUSTOMIZE") != nullptr;
+    bool terrainCasting = std::getenv("AETHERWAKE_TERRAIN_CAST") != nullptr;
+    int appearancePreset = std::getenv("AETHERWAKE_APPEARANCE") ? std::clamp(std::atoi(std::getenv("AETHERWAKE_APPEARANCE")), 0, 3) : 0;
+    int bodyType = std::getenv("AETHERWAKE_BODY") ? std::clamp(std::atoi(std::getenv("AETHERWAKE_BODY")), 0, 1) : 0;
+    float castAnimation = 0.0F;
     float heroX = 0.0F, heroZ = -26.0F, yaw = 0.0F;
     if (const char* spawn = std::getenv("AETHERWAKE_POS")) std::sscanf(spawn, "%f,%f,%f", &heroX, &heroZ, &yaw);
     const char* autoshot = std::getenv("AETHERWAKE_AUTOSHOT");
@@ -579,27 +691,56 @@ int main() {
         if (frame == 100) steadyStart = now;   // streaming burst is over; measure real frame rate from here
         SDL_Event event; while (SDL_PollEvent(&event)) {
             if (event.type == SDL_EVENT_QUIT) running = false;
-            if (event.type == SDL_EVENT_MOUSE_WHEEL) cameraDistance = std::clamp(cameraDistance - event.wheel.y * 2.2F, 0.0F, 30.0F);
-            if (event.type == SDL_EVENT_MOUSE_MOTION) {
+            if (event.type == SDL_EVENT_MOUSE_WHEEL && !inventoryOpen && !customizeOpen) cameraDistance = std::clamp(cameraDistance - event.wheel.y * 2.2F, 0.0F, 30.0F);
+            if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT && !inventoryOpen && !customizeOpen) terrainCasting = true;
+            if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT && (inventoryOpen || customizeOpen)) {
+                int uiWidth = 0, uiHeight = 0; SDL_GetWindowSize(window, &uiWidth, &uiHeight);
+                if (inventoryOpen) {
+                    const float localX = event.button.x - (uiWidth * 0.5F - 202.0F);
+                    const float localY = event.button.y - (uiHeight * 0.5F - 122.0F);
+                    const int column = static_cast<int>(localX / 68.0F), row = static_cast<int>(localY / 68.0F);
+                    if (row == 0 && column >= 0 && column < 4 && localX >= 0.0F && localY >= 0.0F) selected = column;
+                } else {
+                    if (event.button.y >= 122.0F && event.button.y <= 148.0F) {
+                        if (event.button.x >= 46.0F && event.button.x <= 124.0F) bodyType = 0;
+                        else if (event.button.x >= 134.0F && event.button.x <= 230.0F) bodyType = 1;
+                    } else {
+                        const float localX = event.button.x - 46.0F, localY = event.button.y - 158.0F;
+                        const int preset = static_cast<int>(localX / 48.0F);
+                        if (preset >= 0 && preset < 4 && localY >= 0.0F && localY <= 44.0F) appearancePreset = preset;
+                    }
+                }
+            }
+            if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT) terrainCasting = false;
+            if (event.type == SDL_EVENT_MOUSE_MOTION && !inventoryOpen && !customizeOpen) {
                 // Mouse-right turns right. Third-person changes the orbit;
                 // first-person uses a separate conventional, non-inverted aim.
                 yaw -= event.motion.xrel * 0.13F;
                 if (cameraDistance < 1.0F) firstPersonPitch = std::clamp(firstPersonPitch - event.motion.yrel * 0.13F, -70.0F, 70.0F);
                 else cameraElevation = std::clamp(cameraElevation + event.motion.yrel * 0.13F, -28.0F, 65.0F);
             }
-            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) { if (event.key.key == SDLK_ESCAPE) running = false; if (event.key.key >= SDLK_1 && event.key.key <= SDLK_4) selected = static_cast<int>(event.key.key - SDLK_1); if (event.key.key == SDLK_SPACE && !won) { const auto cast = magic.cast(player, &warden, &heart, spells[selected]); if (cast.accepted) spawnSpellVfx(spellParticles, selected, heroX, world::WorldStreamer::heightAt(heroX, heroZ), heroZ, std::sin(yaw * 0.017453293F), std::cos(yaw * 0.017453293F)); won = cast.accepted && warden.health == 0; } }
+            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
+                if (event.key.key == SDLK_ESCAPE) running = false;
+                if (event.key.key >= SDLK_1 && event.key.key <= SDLK_4) selected = static_cast<int>(event.key.key - SDLK_1);
+                if (event.key.key == SDLK_I) { inventoryOpen = !inventoryOpen; customizeOpen = false; terrainCasting = false; SDL_SetWindowRelativeMouseMode(window, !inventoryOpen); }
+                if (event.key.key == SDLK_C) { customizeOpen = !customizeOpen; inventoryOpen = false; terrainCasting = false; SDL_SetWindowRelativeMouseMode(window, !customizeOpen); }
+                if (event.key.key == SDLK_V) appearancePreset = (appearancePreset + 1) % 4;
+                if (event.key.key == SDLK_B) bodyType = 1 - bodyType;
+                if (event.key.key == SDLK_SPACE && !won) { const auto cast = magic.cast(player, &warden, &heart, spells[selected]); if (cast.accepted) { spawnSpellVfx(spellParticles, selected, heroX, world::WorldStreamer::heightAt(heroX, heroZ), heroZ, std::sin(yaw * 0.017453293F), std::cos(yaw * 0.017453293F)); castAnimation = 1.0F; } won = cast.accepted && warden.health == 0; }
+            }
         }
 
         const bool* keys = SDL_GetKeyboardState(nullptr);
+        const bool controlsLocked = inventoryOpen || customizeOpen;
         const float speed = (keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT] ? 24.0F : 9.0F) * dt;
         const float yawRadians = yaw * 0.017453293F;
         const float forwardX = std::sin(yawRadians), forwardZ = std::cos(yawRadians);
-        if (keys[SDL_SCANCODE_W]) { heroX += forwardX * speed; heroZ += forwardZ * speed; }
-        if (keys[SDL_SCANCODE_S]) { heroX -= forwardX * speed; heroZ -= forwardZ * speed; }
+        if (!controlsLocked && keys[SDL_SCANCODE_W]) { heroX += forwardX * speed; heroZ += forwardZ * speed; }
+        if (!controlsLocked && keys[SDL_SCANCODE_S]) { heroX -= forwardX * speed; heroZ -= forwardZ * speed; }
         // buildView's screen-right axis is (-forwardZ, forwardX). The old
         // mapping used it for A, making lateral movement feel inverted.
-        if (keys[SDL_SCANCODE_A]) { heroX += forwardZ * speed; heroZ -= forwardX * speed; }
-        if (keys[SDL_SCANCODE_D]) { heroX -= forwardZ * speed; heroZ += forwardX * speed; }
+        if (!controlsLocked && keys[SDL_SCANCODE_A]) { heroX += forwardZ * speed; heroZ -= forwardX * speed; }
+        if (!controlsLocked && keys[SDL_SCANCODE_D]) { heroX -= forwardZ * speed; heroZ += forwardX * speed; }
         heroX = std::clamp(heroX, -4000.0F, 4000.0F); heroZ = std::clamp(heroZ, -4000.0F, 4000.0F);
         streamedWorld.resolveCollision(heroX, heroZ, 0.55F);
         const float heroY = std::max(world::WorldStreamer::heightAt(heroX, heroZ), world::WorldStreamer::waterLevel - 1.2F);
@@ -607,12 +748,14 @@ int main() {
         if (autospell && frame == 143) {
             const int captureSpell = std::clamp(std::atoi(autospell) - 1, 0, 3);
             spawnSpellVfx(spellParticles, captureSpell, heroX, heroY, heroZ, forwardX, forwardZ);
+            castAnimation = 1.0F;
         }
         updateSpellVfx(spellParticles, dt);
+        castAnimation = std::max(0.0F, castAnimation - dt * 1.65F);
 
         // Procedural locomotion: walk bob and forward lean while moving,
         // a slow breathing bob at rest, all smoothed to avoid pops.
-        const bool moving = keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_A] || keys[SDL_SCANCODE_D];
+        const bool moving = !controlsLocked && (keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_A] || keys[SDL_SCANCODE_D]);
         const bool sprinting = moving && (keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT]);
         static float animPhase = 0.0F, bobAmount = 0.0F, lean = 0.0F;
         animPhase += (sprinting ? 3.4F : moving ? 2.3F : 1.0F) * 6.2831853F * dt;
@@ -678,8 +821,8 @@ int main() {
             // avoiding their depth submission leaves the visible scene intact.
             streamedWorld.drawDetails(detailLists.data(), static_cast<int>(detailLists.size()), heroX, heroZ, 0.0F, 150.0F);
             environment.draw();
-            if (wayfinderList) {
-                glPushMatrix(); glTranslatef(heroX, heroY + bob, heroZ); glRotatef(180.0F - yaw, 0.0F, 1.0F, 0.0F); glRotatef(lean, 1.0F, 0.0F, 0.0F); glCallList(wayfinderList); glPopMatrix();
+            if (playerLists[bodyType]) {
+                glPushMatrix(); glTranslatef(heroX, heroY + bob, heroZ); glRotatef(90.0F - yaw, 0.0F, 1.0F, 0.0F); glRotatef(lean, 1.0F, 0.0F, 0.0F); glCallList(playerLists[bodyType]); glPopMatrix();
             }
             glDisable(GL_POLYGON_OFFSET_FILL);
             glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -750,6 +893,37 @@ int main() {
         } else buildView(eyeX, eyeY, eyeZ, heroX + forwardX * 6.0F, heroY + 2.4F, heroZ + forwardZ * 6.0F, viewMatrix, inverseView);
         glMultMatrixf(viewMatrix);
 
+        // The reticle is the terrain-magic cursor. Ray-march from the camera
+        // into the procedural heightfield and paint persistent smooth brushes
+        // while the left button is held; Shift reverses the brush to carve.
+        if (terrainCasting && !controlsLocked) {
+            float rayX, rayY, rayZ;
+            if (orbit < 1.0F) {
+                const float pitch = firstPersonPitch * 0.017453293F;
+                rayX = forwardX * std::cos(pitch); rayY = std::sin(pitch); rayZ = forwardZ * std::cos(pitch);
+            } else {
+                rayX = heroX + forwardX * 6.0F - eyeX;
+                rayY = heroY + 2.4F - eyeY;
+                rayZ = heroZ + forwardZ * 6.0F - eyeZ;
+                const float length = std::sqrt(rayX * rayX + rayY * rayY + rayZ * rayZ);
+                rayX /= length; rayY /= length; rayZ /= length;
+            }
+            static float lastTerrainBrush = -10.0F;
+            for (float distance = 1.0F; distance < 120.0F; distance += 0.38F) {
+                const float tx = eyeX + rayX * distance, ty = eyeY + rayY * distance, tz = eyeZ + rayZ * distance;
+                const float ground = world::WorldStreamer::heightAt(tx, tz);
+                if (ty <= ground + 0.10F) {
+                    if (elapsed - lastTerrainBrush > 0.18F) {
+                        const float direction = (keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT]) ? -1.0F : 1.0F;
+                        streamedWorld.deformTerrain(tx, tz, 8.0F, direction * 0.09F);
+                        spawnTerrainVfx(spellParticles, tx, ground, tz, frame);
+                        lastTerrainBrush = elapsed;
+                    }
+                    break;
+                }
+            }
+        }
+
         // Sky first: shader-driven cloud dome plus fixed-function stars/moon,
         // all centered on the camera so translation never reveals the boundary.
         glDepthMask(GL_FALSE); glDisable(GL_DEPTH_TEST);
@@ -778,7 +952,11 @@ int main() {
         glDisable(GL_TEXTURE_2D);
         if (cycle.sunHeight < 0.02F) {
             // Stars and moon track the night side of the celestial arc.
+            // Explicit additive state prevents textured world display lists
+            // from leaving celestial points black-modulated after movement.
+            glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE);
             glPushMatrix(); rotateFromBakedDirection(-cycle.sunDir[0], -cycle.sunDir[1], -cycle.sunDir[2]); glCallList(celestialList); glPopMatrix();
+            glDisable(GL_BLEND);
         }
         if (cycle.sunHeight > -0.06F) {
             glPushMatrix(); rotateFromBakedDirection(cycle.sunDir[0], cycle.sunDir[1], cycle.sunDir[2]); glCallList(sunList); glPopMatrix();
@@ -808,18 +986,27 @@ int main() {
             streamedWorld.drawDetails(detailLists.data(), static_cast<int>(detailLists.size()), eyeX, eyeZ,
                                       treeCameraExclusion, 420.0F, forwardX, forwardZ);
             environment.draw();
-            if (wayfinderList && cameraDistance > 1.0F) {
-                glPushMatrix(); glTranslatef(heroX, heroY + bob, heroZ); glRotatef(180.0F - yaw, 0.0F, 1.0F, 0.0F); glRotatef(lean, 1.0F, 0.0F, 0.0F); glCallList(wayfinderList); glPopMatrix();
+            if (playerLists[bodyType] && cameraDistance > 1.0F) {
+                static const float skinPalette[4][3] = {{0.34F,0.19F,0.12F},{0.62F,0.40F,0.27F},{0.82F,0.62F,0.47F},{0.22F,0.12F,0.085F}};
+                static const float clothPalette[4][3] = {{0.11F,0.22F,0.34F},{0.28F,0.095F,0.065F},{0.10F,0.28F,0.17F},{0.26F,0.18F,0.36F}};
+                worldShader.setInt("uMode", 5);
+                worldShader.setVec3("uSkinTint", skinPalette[appearancePreset][0], skinPalette[appearancePreset][1], skinPalette[appearancePreset][2]);
+                worldShader.setVec3("uClothTint", clothPalette[appearancePreset][0], clothPalette[appearancePreset][1], clothPalette[appearancePreset][2]);
+                worldShader.setVec3("uCharacterAnim", animPhase, sprinting ? 1.35F : moving ? 0.82F : 0.0F, castAnimation);
+                glPushMatrix(); glTranslatef(heroX, heroY + bob, heroZ); glRotatef(90.0F - yaw, 0.0F, 1.0F, 0.0F); glRotatef(lean, 1.0F, 0.0F, 0.0F); glCallList(playerLists[bodyType]); glPopMatrix();
+                worldShader.setInt("uMode", 0);
             }
             // Water last: a camera-following sheet blended over the flooded basins.
             worldShader.setInt("uMode", 2);
             glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glDepthMask(GL_FALSE);
             glBegin(GL_QUADS);
             glNormal3f(0.0F, 1.0F, 0.0F); glColor3f(1.0F, 1.0F, 1.0F);
             const float waterExtent = 2400.0F, waterY = world::WorldStreamer::waterLevel;
             glVertex3f(eyeX - waterExtent, waterY, eyeZ - waterExtent); glVertex3f(eyeX + waterExtent, waterY, eyeZ - waterExtent);
             glVertex3f(eyeX + waterExtent, waterY, eyeZ + waterExtent); glVertex3f(eyeX - waterExtent, waterY, eyeZ + waterExtent);
             glEnd();
+            glDepthMask(GL_TRUE);
             glDisable(GL_BLEND);
             worldShader.stop();
         } else { streamedWorld.drawTerrain(); environment.draw(); }
@@ -863,6 +1050,9 @@ int main() {
             postShader.stop();
             glEnable(GL_DEPTH_TEST); glDepthMask(GL_TRUE);
         }
+
+        drawHud(width, height, selected, player.health, player.mana, inventoryOpen, customizeOpen,
+                appearancePreset, bodyType, heroX, heroZ, yaw, terrainCasting);
 
         if (autoshot && frame == autoFrame) { saveScreenshot(autoshot, width, height); if (autoexit) running = false; }
         SDL_GL_SwapWindow(window);

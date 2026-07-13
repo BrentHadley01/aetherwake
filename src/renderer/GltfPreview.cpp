@@ -4,17 +4,23 @@
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <tiny_gltf.h>
+#include <SDL3/SDL.h>
 #include <SDL3/SDL_opengl.h>
 
 #include <cmath>
+#include <algorithm>
+#include <cctype>
 #include <memory>
 #include <string>
 #include <vector>
 
 namespace aetherwake::renderer {
+using MultiTexCoord3fFn = void(APIENTRYP)(GLenum, GLfloat, GLfloat, GLfloat);
+static MultiTexCoord3fFn multiTexCoord3f{};
 struct GltfPreview::Impl { tinygltf::Model model; std::vector<GLuint> textures; GLuint whiteTexture{}; };
 
 bool GltfPreview::load(const std::string& path) {
+    if (!multiTexCoord3f) multiTexCoord3f = reinterpret_cast<MultiTexCoord3fFn>(SDL_GL_GetProcAddress("glMultiTexCoord3f"));
     impl_ = new Impl{};
     std::string warn, err;
     if (!tinygltf::TinyGLTF{}.LoadBinaryFromFile(&impl_->model, &err, &warn, path)) {
@@ -71,21 +77,37 @@ static void drawNode(const tinygltf::Model& model, const std::vector<GLuint>& te
         const auto uvIt = primitive.attributes.find("TEXCOORD_0");
         if (uvIt != primitive.attributes.end()) { const auto& uvAccessor = model.accessors[uvIt->second]; const auto& uvView = model.bufferViews[uvAccessor.bufferView]; texcoords = reinterpret_cast<const float*>(model.buffers[uvView.buffer].data.data() + uvView.byteOffset + uvAccessor.byteOffset); texcoordStride = uvView.byteStride ? uvView.byteStride / sizeof(float) : 2; }
         float r = 0.16F, g = 0.22F, b = 0.20F;
+        float roughness = 0.82F, metallic = 0.0F, materialClass = 0.0F;
         GLuint texture = 0;
         if (primitive.material >= 0) {
             const auto& material = model.materials[primitive.material]; const auto& c = material.pbrMetallicRoughness.baseColorFactor;
+            roughness = static_cast<float>(material.pbrMetallicRoughness.roughnessFactor);
+            metallic = static_cast<float>(material.pbrMetallicRoughness.metallicFactor);
             const int textureIndex = material.pbrMetallicRoughness.baseColorTexture.index;
             if (textureIndex >= 0 && textureIndex < static_cast<int>(model.textures.size())) { const int source = model.textures[textureIndex].source; if (source >= 0 && source < static_cast<int>(textures.size())) texture = textures[source]; }
-            if (c.size() == 4 && (c[0] < 0.95 || c[1] < 0.95 || c[2] < 0.95)) { r = static_cast<float>(c[0]); g = static_cast<float>(c[1]); b = static_cast<float>(c[2]); }
-            const std::string& name = material.name;
-            if (name.find("Basalt") != std::string::npos) { r = 0.12F; g = 0.16F; b = 0.18F; }
-            else if (name.find("soil") != std::string::npos) { r = 0.08F; g = 0.12F; b = 0.045F; }
-            else if (name.find("bark") != std::string::npos) { r = 0.09F; g = 0.045F; b = 0.018F; }
-            else if (name.find("wool") != std::string::npos) { r = 0.02F; g = 0.06F; b = 0.11F; }
-            else if (name.find("shell") != std::string::npos) { r = 0.02F; g = 0.19F; b = 0.12F; }
-            else if (name.find("rune") != std::string::npos || name.find("aether") != std::string::npos) { r = 0.03F; g = 0.9F; b = 0.60F; }
+            if (c.size() == 4) { r = static_cast<float>(c[0]); g = static_cast<float>(c[1]); b = static_cast<float>(c[2]); }
+            std::string name = material.name;
+            std::transform(name.begin(), name.end(), name.begin(), [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+            if (name.find("basalt") != std::string::npos || name.find("rock") != std::string::npos || name.find("stone") != std::string::npos || name.find("pebble") != std::string::npos) {
+                materialClass = 1.0F;
+                if (texture) { r *= 0.48F; g *= 0.52F; b *= 0.54F; }
+            } else if (name.find("bark") != std::string::npos || name.find("wood") != std::string::npos || name.find("trunk") != std::string::npos || name.find("twig") != std::string::npos) {
+                materialClass = 2.0F;
+                if (texture) { r *= 0.62F; g *= 0.54F; b *= 0.44F; }
+            } else if (name.find("needle") != std::string::npos || name.find("leaf") != std::string::npos || name.find("foliage") != std::string::npos || name.find("fern") != std::string::npos || name.find("moss") != std::string::npos || name.find("grass") != std::string::npos || name.find("stem") != std::string::npos || name.find("petal") != std::string::npos || name.find("bloom") != std::string::npos) {
+                materialClass = 3.0F;
+            } else if (name.find("wool") != std::string::npos || name.find("cloth") != std::string::npos || name.find("robe") != std::string::npos || name.find("cloak") != std::string::npos || name.find("hood") != std::string::npos || name.find("mantle") != std::string::npos) {
+                materialClass = 4.0F;
+            } else if (name.find("skin") != std::string::npos || name.find("hand") != std::string::npos) {
+                materialClass = 5.0F;
+            } else if (name.find("metal") != std::string::npos || name.find("iron") != std::string::npos || name.find("ferrule") != std::string::npos) {
+                materialClass = 6.0F;
+            } else if (name.find("rune") != std::string::npos || name.find("aether") != std::string::npos || name.find("focus") != std::string::npos || name.find("crystal") != std::string::npos) {
+                materialClass = 7.0F;
+            }
         }
-        glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D, texture && texcoords ? texture : whiteTexture); glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE); if (texture && texcoords) r = g = b = 1.0F;
+        glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D, texture && texcoords ? texture : whiteTexture); glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+        if (multiTexCoord3f) multiTexCoord3f(GL_TEXTURE1, roughness, metallic, materialClass);
         glColor3f(r, g, b); glBegin(GL_TRIANGLES);
         const int count = primitive.indices >= 0 ? static_cast<int>(model.accessors[primitive.indices].count) : static_cast<int>(positions.count);
         for (int i = 0; i < count; ++i) { const unsigned int idx = primitive.indices >= 0 ? indexAt(model, model.accessors[primitive.indices], i) : static_cast<unsigned int>(i); if (normals) glNormal3fv(normals + idx * normalStride); if (texcoords) glTexCoord2fv(texcoords + idx * texcoordStride); glVertex3fv(vertices + idx * stride); }

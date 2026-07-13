@@ -23,6 +23,8 @@ uniform vec3 uZenithDisp;
 uniform vec3 uCloudDark;
 uniform vec3 uCloudLit;
 uniform float uNight;       // 1 = full night (drives the Purkinje shift)
+uniform vec3 uSkinTint;
+uniform vec3 uClothTint;
 
 varying vec3 vNormal;
 varying vec3 vViewPosition;
@@ -50,9 +52,12 @@ void main() {
         float upness = clamp(direction.y * 1.05 + 0.10, 0.0, 1.0);
         vec3 result = mix(uHorizonDisp, uZenithDisp, pow(upness, 0.62));
         if (direction.y > 0.02) {
-            vec2 cloudUv = direction.xz / max(direction.y, 0.10) * 0.42 + vec2(uTime * 0.006, uTime * 0.0015);
+            vec2 cloudBase = direction.xz / max(direction.y, 0.10) * 0.42;
+            // Two wind layers travel at different speeds, creating the slow
+            // shape evolution and parallax visible in real cloud decks.
+            vec2 cloudUv = cloudBase + vec2(uTime * 0.0105, uTime * 0.0032);
             float broadCloud = cloudFbm(cloudUv);
-            float wisps = cloudFbm(cloudUv * 2.15 + vec2(19.0, -7.0));
+            float wisps = cloudFbm(cloudBase * 2.15 + vec2(19.0, -7.0) + vec2(uTime * 0.026, -uTime * 0.006));
             float cloud = smoothstep(0.51, 0.72, broadCloud * 0.74 + wisps * 0.26);
             float horizonFade = smoothstep(0.03, 0.2, direction.y);
             float glow = pow(max(dot(direction, normalize(uLightDir)), 0.0), 16.0);
@@ -164,6 +169,12 @@ void main() {
         // darkening so boulders sit in the soil instead of glowing above it.
         if (materialClass > 0.5 && materialClass < 1.5)
             surfaceOcclusion = mix(0.58, 1.0, smoothstep(-0.12, 0.58, normal.y));
+        if (uMode == 5) {
+            if (materialClass > 3.5 && materialClass < 4.5)
+                albedo = mix(albedo, max(albedo, vec3(0.035)) * uClothTint * 2.8, 0.72);
+            else if (materialClass > 4.5 && materialClass < 5.5)
+                albedo = mix(albedo, uSkinTint, 0.78);
+        }
     }
 
     // Convert glTF roughness/metalness to the legacy shader's highlight model.
@@ -238,9 +249,11 @@ void main() {
         float cloud = smoothstep(0.51, 0.72, cloudFbm(reflectionUv) * 0.74 + cloudFbm(reflectionUv * 2.15 + vec2(19.0, -7.0)) * 0.26);
         skyReflection = mix(skyReflection, uFog * 0.75, cloud * 0.85);
         float fresnel = 0.15 + 0.85 * pow(1.0 - max(dot(-incident, normal), 0.0), 3.0);
+        // Water transmits the lakebed when viewed from above and becomes more
+        // reflective at grazing angles, rather than behaving like blue paint.
+        alpha = mix(0.18, 0.58, fresnel);
         color = mix(color, skyReflection, fresnel);
         color += pow(max(dot(reflected, lightDirection), 0.0), 240.0) * uLightColor * 0.85 * shadow;
-        alpha = mix(0.88, 0.985, fresnel);
     }
 
     float density = 0.00165;

@@ -25,9 +25,12 @@ public:
     [[nodiscard]] int loadedChunkCount() const { return static_cast<int>(visible_.size()); }
     // Pushes the position out of tree trunks and boulders (circle colliders).
     void resolveCollision(float& x, float& z, float radius) const;
+    // Applies a persistent smooth heightfield brush and rebuilds intersecting
+    // streamed chunks. Positive strength raises terrain; negative carves it.
+    void deformTerrain(float x, float z, float radius, float strength);
     static float heightAt(float x, float z);
 private:
-    struct Chunk { unsigned int list{}; unsigned int grassList{}; int lod{-1}; std::vector<DetailInstance> details; };
+    struct Chunk { unsigned int list{}; unsigned int grassList{}; int lod{-1}; bool terrainDirty{}; std::vector<DetailInstance> details; };
     std::unordered_map<std::uint64_t, Chunk> chunks_;
     std::vector<std::uint64_t> visible_;
     int centerX_{}; int centerZ_{};

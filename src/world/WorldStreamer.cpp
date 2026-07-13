@@ -12,6 +12,9 @@ constexpr int radius = 15;         // 31x31 chunks -> ~2 km of streamed world ar
 constexpr int detailRadius = 4;    // rings that receive scattered trees and boulders
 constexpr int buildBudget = 10;    // chunk display lists compiled per update to avoid hitches
 
+struct TerrainBrush { float x, z, radius, height; };
+std::vector<TerrainBrush> terrainBrushes;
+
 std::uint32_t hash2(int x, int z) {
     std::uint32_t h = static_cast<std::uint32_t>(x) * 374761393U + static_cast<std::uint32_t>(z) * 668265263U;
     h = (h ^ (h >> 13)) * 1274126177U;
@@ -48,7 +51,41 @@ float WorldStreamer::heightAt(float x, float z) {
     // Flatten toward the authored Blender landmark so it sits seamlessly at the origin.
     const float distance = std::sqrt(x * x + z * z);
     const float t = smoothstep01(std::clamp((distance - 38.0F) / 72.0F, 0.0F, 1.0F));
-    return -0.15F + (h - -0.15F) * t;
+    h = -0.15F + (h - -0.15F) * t;
+    for (const TerrainBrush& brush : terrainBrushes) {
+        const float dx = x - brush.x, dz = z - brush.z;
+        const float distanceSquared = dx * dx + dz * dz;
+        if (distanceSquared >= brush.radius * brush.radius) continue;
+        const float falloff = 1.0F - std::sqrt(distanceSquared) / brush.radius;
+        const float smooth = falloff * falloff * (3.0F - 2.0F * falloff);
+        h += brush.height * smooth;
+    }
+    return h;
+}
+
+void WorldStreamer::deformTerrain(float x, float z, float brushRadius, float strength) {
+    TerrainBrush* nearest = nullptr;
+    float nearestDistance = brushRadius * brushRadius * 1.80F;
+    for (TerrainBrush& brush : terrainBrushes) {
+        const float dx = brush.x - x, dz = brush.z - z;
+        const float distance = dx * dx + dz * dz;
+        if (distance < nearestDistance && std::abs(brush.radius - brushRadius) < brushRadius * 0.45F) {
+            nearestDistance = distance; nearest = &brush;
+        }
+    }
+    if (nearest) nearest->height = std::clamp(nearest->height + strength, -1.25F, 1.25F);
+    else if (terrainBrushes.size() < 512) terrainBrushes.push_back({x, z, brushRadius, std::clamp(strength, -1.25F, 1.25F)});
+
+    const int minX = static_cast<int>(std::floor((x - brushRadius) / chunkSize));
+    const int maxX = static_cast<int>(std::floor((x + brushRadius) / chunkSize));
+    const int minZ = static_cast<int>(std::floor((z - brushRadius) / chunkSize));
+    const int maxZ = static_cast<int>(std::floor((z + brushRadius) / chunkSize));
+    for (int cz = minZ; cz <= maxZ; ++cz) for (int cx = minX; cx <= maxX; ++cx) {
+        const auto it = chunks_.find(chunkKey(cx, cz));
+        if (it == chunks_.end()) continue;
+        if (it->second.list) glDeleteLists(it->second.list, 1);
+        it->second.list = 0; it->second.terrainDirty = true;
+    }
 }
 
 WorldStreamer::~WorldStreamer() {
@@ -88,8 +125,9 @@ void WorldStreamer::update(float playerX, float playerZ) {
         Chunk& chunk = chunks_[key];
         if ((chunk.list == 0 || chunk.lod != lod) && builds < buildBudget) {
             ++builds;
+            const bool preserveGrass = chunk.terrainDirty && chunk.lod == lod && chunk.grassList != 0;
             if (chunk.list) glDeleteLists(chunk.list, 1);
-            if (chunk.grassList) { glDeleteLists(chunk.grassList, 1); chunk.grassList = 0; }
+            if (chunk.grassList && !preserveGrass) { glDeleteLists(chunk.grassList, 1); chunk.grassList = 0; }
             const int resolution = lod == 0 ? 48 : lod == 1 ? 20 : lod == 2 ? 10 : 5;
             chunk.list = glGenLists(1); chunk.lod = lod;
             const float originX = cx * chunkSize, originZ = cz * chunkSize;
@@ -122,7 +160,7 @@ void WorldStreamer::update(float playerX, float playerZ) {
             // Swaying grass carpet; texcoord.x carries the sway weight so the
             // vertex shader can bend the tips. The near ring is a dense carpet,
             // the mid rings a sparser, taller stand that reads at distance.
-            if (lod <= 1) {
+            if (lod <= 1 && chunk.grassList == 0) {
                 std::uint32_t grassRng = hash2(cx * 31 + 7, cz * 17 + 3) | 1U;
                 auto grassUnit = [&grassRng]() { grassRng ^= grassRng << 13; grassRng ^= grassRng >> 17; grassRng ^= grassRng << 5; return static_cast<float>(grassRng & 0xFFFFFFU) / 16777215.0F; };
                 chunk.grassList = glGenLists(1);
@@ -211,6 +249,7 @@ void WorldStreamer::update(float playerX, float playerZ) {
                 glEndList();
             }
             // Deterministic environment scatter, only in rings near the player.
+            chunk.terrainDirty = false;
             chunk.details.clear();
             if (ring <= detailRadius) {
                 std::uint32_t rng = hash2(cx * 7 + 3, cz * 13 - 5) | 1U;
