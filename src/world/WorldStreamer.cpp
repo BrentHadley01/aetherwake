@@ -409,7 +409,15 @@ void WorldStreamer::drawDetails(const unsigned int* lists, int listCount, float 
             const float lodDistance = shadowPass ? 32.0F : 84.0F;
             const float farLodDistance = shadowPass ? 78.0F : 170.0F;
             const float impostorDistance = shadowPass ? 145.0F : 300.0F;
-            if (instance.type <= 1 && listCount >= 31 && distanceSquared > impostorDistance * impostorDistance) resolvedType = 29 + instance.type;
+            if (shadowPass && instance.type <= 1 && listCount >= 29) {
+                // Shadows always cast from the solid-bough LOD: needle blades
+                // are narrower than a shadow texel and rasterize unstably in
+                // the depth map, popping whole texels as the sun drifts. The
+                // coarse crown produces the stable dappled canopy shadows big
+                // open-world titles get by shadowing from reduced LODs.
+                resolvedType = distanceSquared > impostorDistance * impostorDistance && listCount >= 31 ? 29 + instance.type : 27 + instance.type;
+            }
+            else if (instance.type <= 1 && listCount >= 31 && distanceSquared > impostorDistance * impostorDistance) resolvedType = 29 + instance.type;
             else if (instance.type <= 1 && listCount >= 29 && distanceSquared > farLodDistance * farLodDistance) resolvedType = 27 + instance.type;
             else if (instance.type <= 1 && listCount >= 14 && distanceSquared > lodDistance * lodDistance) resolvedType += 12;
             if (instance.type == 14 && listCount >= 16 && distanceSquared > lodDistance * lodDistance) resolvedType = 15;

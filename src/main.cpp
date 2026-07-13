@@ -652,10 +652,12 @@ int main() {
             // Texel-snap in LIGHT space: the view rows lie in the shadow map's
             // plane, so quantizing the translation there is exact and stops
             // shadow edges from re-rasterizing differently as the player moves.
-            const float texelWorld = 2.0F * 210.0F / shadowSize;
+            // 140 m half-extent gives ~14 cm texels - finer, stabler detail
+            // than the previous 20 cm over a window the haze hides anyway.
+            const float texelWorld = 2.0F * 140.0F / shadowSize;
             lightView[12] = std::round(lightView[12] / texelWorld) * texelWorld;
             lightView[13] = std::round(lightView[13] / texelWorld) * texelWorld;
-            buildOrtho(210.0F, 210.0F, 60.0F, 800.0F, lightProj);
+            buildOrtho(140.0F, 140.0F, 60.0F, 800.0F, lightProj);
             bindFramebuffer(GL_FRAMEBUFFER, shadowFbo);
             glViewport(0, 0, shadowSize, shadowSize); glClear(GL_DEPTH_BUFFER_BIT);
             glMatrixMode(GL_PROJECTION); glLoadMatrixf(lightProj);
@@ -665,7 +667,7 @@ int main() {
             streamedWorld.drawTerrain(4);
             // Beyond this radius shadows are imperceptible in the moon haze;
             // avoiding their depth submission leaves the visible scene intact.
-            streamedWorld.drawDetails(detailLists.data(), static_cast<int>(detailLists.size()), heroX, heroZ, 0.0F, 180.0F);
+            streamedWorld.drawDetails(detailLists.data(), static_cast<int>(detailLists.size()), heroX, heroZ, 0.0F, 150.0F);
             environment.draw();
             if (wayfinderList) {
                 glPushMatrix(); glTranslatef(heroX, heroY + bob, heroZ); glRotatef(180.0F - yaw, 0.0F, 1.0F, 0.0F); glRotatef(lean, 1.0F, 0.0F, 0.0F); glCallList(wayfinderList); glPopMatrix();

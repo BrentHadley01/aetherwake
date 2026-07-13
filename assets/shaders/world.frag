@@ -173,7 +173,7 @@ void main() {
     // PCF is meaningful only before atmospheric perspective has softened the
     // surface. Distant HLOD foliage retains direct light and fog but skips four
     // shadow texture reads whose result is sub-pixel at this resolution.
-    if (uShadowOn == 1 && distanceFromCamera < 190.0) {
+    if (uShadowOn == 1 && distanceFromCamera < 130.0) {
         // Normal-offset lookup: sampling from a point pushed off the surface
         // kills the self-shadow acne on thin needles and grazing ground that
         // otherwise sparkles as the sun moves.
