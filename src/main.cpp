@@ -759,17 +759,23 @@ int main() {
         updateSpellVfx(spellParticles, dt);
         castAnimation = std::max(0.0F, castAnimation - dt * 1.65F);
 
-        // Procedural locomotion: walk bob and forward lean while moving,
-        // a slow breathing bob at rest, all smoothed to avoid pops.
+        // Locomotion has its own eased state instead of directly copying key
+        // presses. It gives a human start/stop, and keeps a real distinction
+        // between the compact walk cadence and the longer running stride.
         const bool moving = !controlsLocked && (keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_A] || keys[SDL_SCANCODE_D]);
         const bool sprinting = moving && (keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT]);
-        static float animPhase = 0.0F, bobAmount = 0.0F, lean = 0.0F;
-        animPhase += (sprinting ? 3.4F : moving ? 2.3F : 1.0F) * 6.2831853F * dt;
-        const float targetBob = sprinting ? 0.15F : moving ? 0.10F : 0.03F;
-        const float targetLean = sprinting ? 8.0F : moving ? 4.5F : 0.0F;
-        bobAmount += (targetBob - bobAmount) * std::min(1.0F, dt * 6.0F);
-        lean += (targetLean - lean) * std::min(1.0F, dt * 6.0F);
-        const float bob = std::abs(std::sin(animPhase)) * bobAmount;
+        static float animPhase = 0.0F, locomotion = 0.0F, runBlend = 0.0F, bobAmount = 0.0F, lean = 0.0F;
+        const float targetLocomotion = moving ? 1.0F : 0.0F;
+        locomotion += (targetLocomotion - locomotion) * std::min(1.0F, dt * (moving ? 9.5F : 7.0F));
+        const float targetRunBlend = sprinting ? 1.0F : 0.0F;
+        runBlend += (targetRunBlend - runBlend) * std::min(1.0F, dt * 5.5F);
+        const float cadence = 1.72F + runBlend * 1.22F;
+        animPhase += cadence * 6.2831853F * dt * locomotion;
+        const float targetBob = locomotion * (0.032F + runBlend * 0.064F);
+        const float targetLean = locomotion * (2.8F + runBlend * 6.2F);
+        bobAmount += (targetBob - bobAmount) * std::min(1.0F, dt * 8.0F);
+        lean += (targetLean - lean) * std::min(1.0F, dt * 7.0F);
+        const float bob = (1.0F - std::cos(animPhase * 2.0F)) * 0.5F * bobAmount;
 
         // Day/night cycle: a full day every 12 minutes; hold T to fast-forward,
         // or freeze at a specific time with AETHERWAKE_TIME=0..1 (0 = midnight).
@@ -828,7 +834,15 @@ int main() {
             streamedWorld.drawDetails(detailLists.data(), static_cast<int>(detailLists.size()), heroX, heroZ, 0.0F, 150.0F);
             environment.draw();
             if (playerLists[bodyType]) {
+                // Match the visible articulated pose in the depth pass so the
+                // player's shadow stays attached to moving limbs.
+                worldShader.use();
+                worldShader.setInt("uMode", 5);
+                worldShader.setFloat("uTime", elapsed);
+                worldShader.setVec3("uCharacterAnim", animPhase, locomotion, runBlend);
+                worldShader.setFloat("uCastStrength", castAnimation);
                 glPushMatrix(); glTranslatef(heroX, heroY + bob, heroZ); glRotatef(270.0F + characterYaw, 0.0F, 1.0F, 0.0F); glRotatef(lean, 1.0F, 0.0F, 0.0F); glCallList(playerLists[bodyType]); glPopMatrix();
+                worldShader.stop();
             }
             glDisable(GL_POLYGON_OFFSET_FILL);
             glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -998,7 +1012,8 @@ int main() {
                 worldShader.setInt("uMode", 5);
                 worldShader.setVec3("uSkinTint", skinPalette[appearancePreset][0], skinPalette[appearancePreset][1], skinPalette[appearancePreset][2]);
                 worldShader.setVec3("uClothTint", clothPalette[appearancePreset][0], clothPalette[appearancePreset][1], clothPalette[appearancePreset][2]);
-                worldShader.setVec3("uCharacterAnim", animPhase, sprinting ? 1.35F : moving ? 0.82F : 0.0F, castAnimation);
+                worldShader.setVec3("uCharacterAnim", animPhase, locomotion, runBlend);
+                worldShader.setFloat("uCastStrength", castAnimation);
                 glPushMatrix(); glTranslatef(heroX, heroY + bob, heroZ); glRotatef(270.0F + characterYaw, 0.0F, 1.0F, 0.0F); glRotatef(lean, 1.0F, 0.0F, 0.0F); glCallList(playerLists[bodyType]); glPopMatrix();
                 worldShader.setInt("uMode", 0);
             }
