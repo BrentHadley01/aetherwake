@@ -20,28 +20,36 @@ void main() {
         float phase = uCharacterAnim.x;
         float movement = uCharacterAnim.y;
         float casting = uCharacterAnim.z;
-        float side = vertex.x < 0.0 ? -1.0 : 1.0;
+        float side = vertex.z < 0.0 ? -1.0 : 1.0;
 
-        // Soft positional skinning for the normalized Tripo base meshes.
-        // The characters share height/orientation, so the same locomotion
-        // controller drives both while keeping their authored topology intact.
-        float legWeight = (1.0 - smoothstep(0.76, 0.98, vertex.y)) * smoothstep(0.025, 0.11, abs(vertex.x));
+        // Raw accessor bounds confirm glTF Y-up storage: X is depth, Y is
+        // height and Z is body width. Joint motion must use those raw axes;
+        // node/import transforms happen only after this shader stage.
+        float legWeight = (1.0 - smoothstep(0.76, 0.98, vertex.y)) * smoothstep(0.025, 0.11, abs(vertex.z));
         float legAngle = sin(phase + (side > 0.0 ? 0.0 : 3.14159265)) * 0.48 * movement;
-        vec2 leg = vertex.yz - vec2(0.94, 0.0);
+        vec2 leg = vertex.xy - vec2(0.0, 0.94);
         vec2 legRotated = vec2(leg.x * cos(legAngle) - leg.y * sin(legAngle), leg.x * sin(legAngle) + leg.y * cos(legAngle));
-        vertex.yz = mix(vertex.yz, legRotated + vec2(0.94, 0.0), legWeight);
+        vertex.xy = mix(vertex.xy, legRotated + vec2(0.0, 0.94), legWeight);
 
-        float armWeight = smoothstep(0.20, 0.43, abs(vertex.x)) * smoothstep(0.82, 1.30, vertex.y);
+        float armWeight = smoothstep(0.20, 0.43, abs(vertex.z)) * smoothstep(0.82, 1.30, vertex.y);
+        // Finish converting the source T-pose into a natural arm-down rest
+        // pose by rotating width/height around each shoulder's depth axis.
+        float restAngle = side * 0.92;
+        vec2 armRest = vertex.zy - vec2(side * 0.22, 1.46);
+        vec2 rested = vec2(armRest.x * cos(restAngle) + armRest.y * sin(restAngle),
+                           -armRest.x * sin(restAngle) + armRest.y * cos(restAngle));
+        vertex.zy = mix(vertex.zy, rested + vec2(side * 0.22, 1.46), armWeight);
+
         float armAngle = sin(phase + (side > 0.0 ? 3.14159265 : 0.0)) * 0.54 * movement;
         // Casting leads with the right arm while the left counterbalances.
         armAngle += casting * (side > 0.0 ? -0.92 : 0.24);
-        vec2 arm = vertex.yz - vec2(1.46, 0.0);
+        vec2 arm = vertex.xy - vec2(0.0, 1.46);
         vec2 armRotated = vec2(arm.x * cos(armAngle) - arm.y * sin(armAngle), arm.x * sin(armAngle) + arm.y * cos(armAngle));
-        vertex.yz = mix(vertex.yz, armRotated + vec2(1.46, 0.0), armWeight);
+        vertex.xy = mix(vertex.xy, armRotated + vec2(0.0, 1.46), armWeight);
 
         // Breathing and weight transfer prevent the idle pose from freezing.
         float breath = sin(uTime * 1.65) * 0.008 * smoothstep(1.05, 1.72, vertex.y);
-        vertex.z += breath;
+        vertex.x += breath;
         vertex.y += abs(sin(phase * 2.0)) * 0.022 * movement;
     }
     if (uMode == 3) {

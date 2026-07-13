@@ -822,7 +822,7 @@ int main() {
             streamedWorld.drawDetails(detailLists.data(), static_cast<int>(detailLists.size()), heroX, heroZ, 0.0F, 150.0F);
             environment.draw();
             if (playerLists[bodyType]) {
-                glPushMatrix(); glTranslatef(heroX, heroY + bob, heroZ); glRotatef(90.0F - yaw, 0.0F, 1.0F, 0.0F); glRotatef(lean, 1.0F, 0.0F, 0.0F); glCallList(playerLists[bodyType]); glPopMatrix();
+                glPushMatrix(); glTranslatef(heroX, heroY + bob, heroZ); glRotatef(270.0F - yaw, 0.0F, 1.0F, 0.0F); glRotatef(lean, 1.0F, 0.0F, 0.0F); glCallList(playerLists[bodyType]); glPopMatrix();
             }
             glDisable(GL_POLYGON_OFFSET_FILL);
             glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -993,7 +993,7 @@ int main() {
                 worldShader.setVec3("uSkinTint", skinPalette[appearancePreset][0], skinPalette[appearancePreset][1], skinPalette[appearancePreset][2]);
                 worldShader.setVec3("uClothTint", clothPalette[appearancePreset][0], clothPalette[appearancePreset][1], clothPalette[appearancePreset][2]);
                 worldShader.setVec3("uCharacterAnim", animPhase, sprinting ? 1.35F : moving ? 0.82F : 0.0F, castAnimation);
-                glPushMatrix(); glTranslatef(heroX, heroY + bob, heroZ); glRotatef(90.0F - yaw, 0.0F, 1.0F, 0.0F); glRotatef(lean, 1.0F, 0.0F, 0.0F); glCallList(playerLists[bodyType]); glPopMatrix();
+                glPushMatrix(); glTranslatef(heroX, heroY + bob, heroZ); glRotatef(270.0F - yaw, 0.0F, 1.0F, 0.0F); glRotatef(lean, 1.0F, 0.0F, 0.0F); glCallList(playerLists[bodyType]); glPopMatrix();
                 worldShader.setInt("uMode", 0);
             }
             // Water last: a camera-following sheet blended over the flooded basins.
