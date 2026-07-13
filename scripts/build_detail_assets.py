@@ -44,6 +44,9 @@ def solid_material(name, rgba, roughness=0.9):
 
 
 def export_glb(filename):
+    asset_filter = os.environ.get("AETHERWAKE_ASSET_FILTER", "").strip()
+    if asset_filter and not any(token.strip() in filename for token in asset_filter.split(",")):
+        return
     bpy.ops.export_scene.gltf(
         filepath=os.path.join(MODELS, filename),
         export_format="GLB",
@@ -235,12 +238,15 @@ def build_conifer(filename, seed, height, branch_rows, branch_length, needle_dar
     high_detail = branch_rows > 20
     far_detail = "_far" in filename
     is_spruce = "spruce" in filename
+    architecture = "windswept" if "_wind" in filename else "veteran" if "_old" in filename else "natural"
     segments = 12 if high_detail else 5 if far_detail else 7
     base = Vector((0, 0, 0))
     drift = Vector((0, 0, 0))
     points = [base.copy()]
     for i in range(1, segments + 1):
-        drift += Vector((rng.uniform(-0.10, 0.10), rng.uniform(-0.10, 0.10), 0))
+        wind_bias = Vector((0.075, -0.025, 0)) if architecture == "windswept" else Vector((0, 0, 0))
+        veteran_kink = Vector((rng.uniform(-0.09, 0.09), rng.uniform(-0.09, 0.09), 0)) if architecture == "veteran" else Vector((0, 0, 0))
+        drift += Vector((rng.uniform(-0.10, 0.10), rng.uniform(-0.10, 0.10), 0)) + wind_bias + veteran_kink
         points.append(Vector((drift.x, drift.y, height * i / segments)))
     for i in range(segments):
         t0, t1 = i / segments, (i + 1) / segments
@@ -262,29 +268,60 @@ def build_conifer(filename, seed, height, branch_rows, branch_length, needle_dar
     whorls = ((17 if is_spruce else 18) if high_detail else
               (9 if is_spruce else 10) if far_detail else (13 if is_spruce else 14))
     for row in range(whorls):
-        t = 0.14 + 0.79 * row / (whorls - 1)
+        row_jitter = rng.uniform(-0.018, 0.018) if 0 < row < whorls - 1 else 0.0
+        t = max(0.11, min(0.95, 0.14 + 0.79 * row / (whorls - 1) + row_jitter))
         trunk_point = points[min(int(t * segments), segments - 1)].lerp(points[min(int(t * segments) + 1, segments)], (t * segments) % 1.0)
-        whorl_rotation = row * GOLDEN_ANGLE * 0.43 + rng.uniform(-0.16, 0.16)
-        for arm in range(3):
-            if row > 2 and rng.random() < (0.08 if high_detail else 0.02 if far_detail else 0.04):
+        whorl_rotation = row * GOLDEN_ANGLE * rng.uniform(0.34, 0.53) + rng.uniform(-0.42, 0.42)
+        # Real conifers do not repeat a three-arm radial scaffold. Juvenile
+        # growth may form whorls, but crowding, damage and light competition
+        # leave two to five surviving primaries with unequal spacing.
+        if architecture == "veteran":
+            arm_count = rng.choice((2, 2, 3, 4, 5))
+        elif architecture == "windswept":
+            arm_count = rng.choice((2, 3, 3, 4))
+        else:
+            arm_count = rng.choice((2, 3, 3, 4, 4))
+        for arm in range(arm_count):
+            gap_chance = 0.18 if architecture == "veteran" else 0.12 if architecture == "windswept" else 0.08
+            if row > 1 and rng.random() < gap_chance:
                 continue  # storm gap; breaks perfect radial repetition
-            azimuth = whorl_rotation + arm * math.tau / 3.0 + rng.uniform(-0.12, 0.12)
+            azimuth = whorl_rotation + arm * math.tau / arm_count + rng.uniform(-0.30, 0.30)
             crown_taper = (1.0 - t) ** (0.62 if is_spruce else 0.78)
-            length = branch_length * crown_taper * rng.uniform(0.82, 1.12) + 0.20
-            droop = (-0.52 if is_spruce else -0.30) + t * (0.40 if is_spruce else 0.27)
+            side_light = math.cos(azimuth - 0.12)
+            exposure = 1.0
+            if architecture == "windswept": exposure = 0.48 + 0.62 * max(0.0, side_light)
+            elif architecture == "veteran": exposure = rng.uniform(0.68, 1.18)
+            length = (branch_length * crown_taper * rng.uniform(0.68, 1.24) + 0.20) * exposure
+            base_droop = -0.58 if is_spruce else -0.34
+            droop = base_droop + t * (0.46 if is_spruce else 0.34) + rng.uniform(-0.22, 0.18)
+            if architecture == "veteran" and row < whorls * 0.45: droop -= rng.uniform(0.10, 0.32)
+            if architecture == "windswept": droop += side_light * 0.08
             direction = Vector((math.cos(azimuth), math.sin(azimuth), droop)).normalized()
-            # Curved primary limb: depressed shoulder, then a subtly lifted tip.
-            elbow = trunk_point + direction * length * 0.52 + Vector((0, 0, -0.06 * length))
-            tip = trunk_point + direction * length + Vector((0, 0, (0.10 if is_spruce else 0.16) * length))
+            # Three-stage primary limb. A single down/up elbow produces the
+            # repeated wide-V silhouette; independent shoulder, sag and tip
+            # points instead approximate the long irregular curve of a limb
+            # responding to its own weight and local light.
+            shoulder_fraction = rng.uniform(0.22, 0.34)
+            middle_fraction = rng.uniform(0.55, 0.72)
+            limb_side_curve = Vector((-math.sin(azimuth), math.cos(azimuth), 0)) * rng.uniform(-0.10, 0.10) * length
+            shoulder = trunk_point + direction * length * shoulder_fraction + Vector((0, 0, rng.uniform(-0.045, 0.025) * length))
+            middle = trunk_point + direction * length * middle_fraction + limb_side_curve * 0.55 + Vector((0, 0, -rng.uniform(0.055, 0.17) * length))
+            tip_lift = rng.uniform(0.02, 0.20) if is_spruce else rng.uniform(0.07, 0.29)
+            if architecture == "veteran" and rng.random() < 0.28:
+                tip_lift = rng.uniform(-0.10, 0.08)  # weighted or storm-damaged tip
+            tip = trunk_point + direction * length + limb_side_curve + Vector((0, 0, tip_lift * length))
             branch_radius = (0.060 if is_spruce else 0.052) * (1.0 - t * 0.52)
-            wood.append(add_cone_between(trunk_point, elbow, branch_radius, branch_radius * 0.55, sides=10 if high_detail else 5 if far_detail else 6))
-            wood.append(add_cone_between(elbow, tip, branch_radius * 0.58, 0.006, sides=8 if high_detail else 4 if far_detail else 5))
+            primary_sides = 10 if high_detail else 5 if far_detail else 6
+            tip_sides = 8 if high_detail else 4 if far_detail else 5
+            wood.append(add_cone_between(trunk_point, shoulder, branch_radius, branch_radius * 0.76, sides=primary_sides))
+            wood.append(add_cone_between(shoulder, middle, branch_radius * 0.78, branch_radius * 0.39, sides=primary_sides))
+            wood.append(add_cone_between(middle, tip, branch_radius * 0.42, 0.006, sides=tip_sides))
 
             limb_direction = (tip - trunk_point).normalized()
             limb_side = limb_direction.cross(Vector((0, 0, 1))).normalized()
             # Lowest whorls retain a minority of dead, broken branches—the
             # foliage crown starts gradually instead of at a hard cutoff.
-            dead_limb = row < 3 and ((arm + row) % 3 == 0)
+            dead_limb = (row < 3 and rng.random() < 0.42) or (architecture == "veteran" and row < whorls * 0.58 and rng.random() < 0.16)
             stations = (0.30, 0.62, 0.90) if far_detail else (0.24, 0.46, 0.68, 0.88)
             # Needle-bearing short shoots continue along the primary limb;
             # secondary twig clusters alone leave an artificial bare rail.
@@ -1088,6 +1125,23 @@ build_conifer("detail_spruce_far.glb", seed=19, height=8.0, branch_rows=9, branc
               needle_dark=(0.020, 0.052, 0.032, 1.0), needle_lit=(0.033, 0.082, 0.048, 1.0))
 build_conifer_impostor("detail_pine_impostor.glb", seed=707, height=11.5, crown_width=3.1, is_spruce=False)
 build_conifer_impostor("detail_spruce_impostor.glb", seed=719, height=8.0, crown_width=3.5, is_spruce=True)
+# Veteran variants have irregular surviving whorls, deeper lower-limb droop,
+# crown holes and a more crooked trunk. Matching assets at every LOD preserve
+# that individual tree's identity as the camera crosses distance bands.
+build_conifer("detail_pine_old.glb", seed=1707, height=12.4, branch_rows=30, branch_length=2.9,
+              needle_dark=(0.020, 0.052, 0.024, 1.0), needle_lit=(0.034, 0.079, 0.033, 1.0))
+build_conifer("detail_spruce_old.glb", seed=1719, height=9.2, branch_rows=26, branch_length=3.35,
+              needle_dark=(0.017, 0.046, 0.028, 1.0), needle_lit=(0.029, 0.073, 0.042, 1.0))
+build_conifer("detail_pine_old_lod.glb", seed=1707, height=12.4, branch_rows=18, branch_length=2.9,
+              needle_dark=(0.020, 0.052, 0.024, 1.0), needle_lit=(0.034, 0.079, 0.033, 1.0))
+build_conifer("detail_spruce_old_lod.glb", seed=1719, height=9.2, branch_rows=16, branch_length=3.35,
+              needle_dark=(0.017, 0.046, 0.028, 1.0), needle_lit=(0.029, 0.073, 0.042, 1.0))
+build_conifer("detail_pine_old_far.glb", seed=1707, height=12.4, branch_rows=10, branch_length=2.9,
+              needle_dark=(0.020, 0.052, 0.024, 1.0), needle_lit=(0.034, 0.079, 0.033, 1.0))
+build_conifer("detail_spruce_old_far.glb", seed=1719, height=9.2, branch_rows=9, branch_length=3.35,
+              needle_dark=(0.017, 0.046, 0.028, 1.0), needle_lit=(0.029, 0.073, 0.042, 1.0))
+build_conifer_impostor("detail_pine_old_impostor.glb", seed=2707, height=12.4, crown_width=3.45, is_spruce=False)
+build_conifer_impostor("detail_spruce_old_impostor.glb", seed=2719, height=9.2, crown_width=3.8, is_spruce=True)
 build_birch("detail_birch.glb", seed=151, branch_rows=24, leaves_per_twig=18)
 build_birch("detail_birch_lod.glb", seed=151, branch_rows=14, leaves_per_twig=7)
 build_snag()

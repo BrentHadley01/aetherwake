@@ -421,6 +421,19 @@ void WorldStreamer::drawDetails(const unsigned int* lists, int listCount, float 
             else if (instance.type <= 1 && listCount >= 29 && distanceSquared > farLodDistance * farLodDistance) resolvedType = 27 + instance.type;
             else if (instance.type <= 1 && listCount >= 14 && distanceSquared > lodDistance * lodDistance) resolvedType += 12;
             if (instance.type == 14 && listCount >= 16 && distanceSquared > lodDistance * lodDistance) resolvedType = 15;
+            if (instance.type <= 1 && listCount >= 39) {
+                // Preserve a tree's individual architecture through every LOD.
+                // Position hashing makes the choice deterministic across chunk
+                // unload/reload while avoiding visible alternating patterns.
+                const bool veteran = hashToUnit(hash2(static_cast<int>(std::floor(instance.x * 2.0F)),
+                                                       static_cast<int>(std::floor(instance.z * 2.0F)))) < 0.44F;
+                if (veteran) {
+                    if (resolvedType == instance.type) resolvedType = 31 + instance.type;
+                    else if (resolvedType == 12 + instance.type) resolvedType = 33 + instance.type;
+                    else if (resolvedType == 27 + instance.type) resolvedType = 35 + instance.type;
+                    else if (resolvedType == 29 + instance.type) resolvedType = 37 + instance.type;
+                }
+            }
             const unsigned int list = lists[resolvedType % listCount];
             if (!list) continue;
             glPushMatrix();
